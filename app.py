@@ -1,4 +1,3 @@
-# app.py  (dark-first UI refresh)
 import streamlit as st
 import yfinance as yf
 import numpy as np
