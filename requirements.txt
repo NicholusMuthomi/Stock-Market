@@ -8,3 +8,4 @@ scikit_learn==1.7.1
 seaborn==0.13.2
 streamlit==1.44.0
 yfinance==0.2.61
+tensorflow==2.15.0
