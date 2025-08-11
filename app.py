@@ -7,13 +7,11 @@ import matplotlib.pyplot as plt
 import joblib
 from datetime import datetime, timedelta
 from sklearn.preprocessing import MinMaxScaler
-from keras.models import load_model
+from tensorflow.keras.models import load_model
 import plotly.graph_objects as go
 import plotly.express as px
 
-###############################################################################
 # 1.  GLOBAL STYLING 
-###############################################################################
 st.set_page_config(page_title="Google Stock Predictor", layout="wide")
 
 st.markdown(
@@ -254,9 +252,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-###############################################################################
-# 2.  RE-USABLE COMPONENTS (unchanged)
-###############################################################################
+# 2.  RE-USABLE COMPONENTS
+
 def metric_card(label, value, delta=None):
     """Render a single metric box."""
     delta_html = f"<span class='metric-delta'>{delta}</span>" if delta else ""
@@ -307,9 +304,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-###############################################################################
-# 3.  LOAD ML ARTEFACTS (unchanged)
-###############################################################################
+# 3.  LOAD ML ARTEFACTS
 @st.cache_resource
 def load_ml_components():
     model = load_model("google_stock_price_prediction_model.keras")
@@ -318,9 +313,7 @@ def load_ml_components():
 
 model, scaler = load_ml_components()
 
-###############################################################################
-# 4.  HEADER (unchanged)
-###############################################################################
+# 4.  HEADER 
 st.markdown(
     """
 <div class="card" style="text-align:center;">
@@ -334,9 +327,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-###############################################################################
-# 5.  SIDEBAR (unchanged)
-###############################################################################
+# 5.  SIDEBAR 
 st.sidebar.header("Settings")
 lookback_days = st.sidebar.slider(
     "Lookback Window (days)", min_value=50, max_value=200, value=100
@@ -344,10 +335,7 @@ lookback_days = st.sidebar.slider(
 prediction_days = st.sidebar.slider(
     "Prediction Horizon (days)", min_value=1, max_value=30, value=7
 )
-
-###############################################################################
-# 6.  DATA PIPELINE (unchanged)
-###############################################################################
+# 6.  DATA PIPELINE
 @st.cache_data
 def get_stock_data():
     end_date = datetime.now()
@@ -372,9 +360,7 @@ def make_predictions(model, last_sequence, days_to_predict):
         current_sequence[-1] = next_pred
     return scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
 
-###############################################################################
 # 7.  MAIN DASHBOARD
-###############################################################################
 data = get_stock_data()
 x_data, close_prices = prepare_data(data, lookback_days)
 predictions = make_predictions(model, x_data[-1], prediction_days)
@@ -402,7 +388,7 @@ with col3:
     )
 st.markdown("</div>", unsafe_allow_html=True)
 
-# --- Chart  (FIXED: close the div AFTER the chart) ---
+# --- Chart
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("Price Chart")
 
