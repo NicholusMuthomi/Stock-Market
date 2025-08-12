@@ -1,8 +1,8 @@
-ml-dtypes==0.3.2
+tensorflow==2.15.0
+ml-dtypes==0.2.1
 streamlit
 pandas
 numpy
 scikit-learn
 matplotlib
-tensorflow==2.15.0
 yfinance
