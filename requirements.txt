@@ -7,3 +7,5 @@ scikit-learn
 tensorflow
 joblib
 plotly
+tensorflow==2.15.0
+ml-dtypes==0.3.2
