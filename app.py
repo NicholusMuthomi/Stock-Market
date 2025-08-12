@@ -307,15 +307,10 @@ st.markdown(
 # 3.  LOAD ML ARTEFACTS
 @st.cache_resource
 def load_ml_components():
-    # Use absolute path or ensure the file is in the correct location
-    model_path = os.path.join(os.path.dirname(__file__), "google_stock_price_prediction_model.keras"
-    try:
-        model = load_model(model_path)
-        scaler = joblib.load("stock_price_scaler.pkl")
-        return model, scaler
-    except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
-        return None, None
+    model_path = os.path.join(os.path.dirname(__file__), "google_stock_price_prediction_model.keras")
+    model = load_model(model_path)
+    scaler = joblib.load("stock_price_scaler.pkl")
+    return model, scaler
 
 model, scaler = load_ml_components()
 
