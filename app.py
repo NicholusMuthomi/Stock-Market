@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import joblib
+import os
 from datetime import datetime, timedelta
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import load_model
@@ -306,7 +307,8 @@ st.markdown(
 # 3.  LOAD ML ARTEFACTS
 @st.cache_resource
 def load_ml_components():
-    model = load_model("google_stock_price_prediction_model.h5")
+    model_path = os.path.join(os.path.dirname(__file__), "google_stock_price_prediction_model.h5")
+    model = load_model(model_path)
     scaler = joblib.load("stock_price_scaler.pkl")
     return model, scaler
 
