@@ -1,12 +1,10 @@
 joblib==1.4.2
 keras==3.10.0
 matplotlib==3.10.5
-numpy==1.26.4
+numpy==2.3.2
 pandas==2.3.1
 plotly==6.0.1
-scikit-learn==1.7.1
+scikit_learn==1.7.1
 seaborn==0.13.2
 streamlit==1.44.0
 yfinance==0.2.61
-tensorflow==2.15.0
-python-3.11
