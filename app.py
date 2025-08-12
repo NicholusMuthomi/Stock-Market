@@ -306,7 +306,7 @@ st.markdown(
 # 3.  LOAD ML ARTEFACTS
 @st.cache_resource
 def load_ml_components():
-    model = load_model("google_stock_price_prediction_model.keras")
+    model = load_model("google_stock_price_prediction_model.h5")
     scaler = joblib.load("stock_price_scaler.pkl")
     return model, scaler
 
