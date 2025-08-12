@@ -308,6 +308,7 @@ st.markdown(
 @st.cache_resource
 def load_ml_components():
     model = load_model("google_stock_price_prediction_model.keras", compile=False)
+    model.save("google_stock_price_prediction_model.keras", save_format="keras")
     scaler = joblib.load("stock_price_scaler.pkl")
     return model, scaler
 
