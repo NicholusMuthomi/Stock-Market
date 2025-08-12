@@ -307,7 +307,7 @@ st.markdown(
 # 3.  LOAD ML ARTEFACTS
 @st.cache_resource
 def load_ml_components():
-    model_path = os.path.join(os.path.dirname(__file__), "google_stock_price_prediction_model.h5")
+    model_path = os.path.join(os.path.dirname(__file__), "google_stock_price_prediction_model.keras")
     model = load_model(model_path)
     scaler = joblib.load("stock_price_scaler.pkl")
     return model, scaler
@@ -472,7 +472,7 @@ fig.update_layout(
     )
 )
 st.plotly_chart(fig, use_container_width=True)
-st.markdown("</div>", unsafe_allow_html=True)  # close the card AFTER the chart
+st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Prediction table ---
 st.markdown('<div class="card">', unsafe_allow_html=True)
