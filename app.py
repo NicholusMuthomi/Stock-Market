@@ -307,10 +307,14 @@ st.markdown(
 # 3.  LOAD ML ARTEFACTS
 @st.cache_resource
 def load_ml_components():
-    model = load_model("google_stock_price_prediction_model.keras", compile=False)
-    model.save("google_stock_price_prediction_model.keras", save_format="keras")
-    scaler = joblib.load("stock_price_scaler.pkl")
-    return model, scaler
+    try:
+        model = load_model("google_stock_price_prediction_model.keras", compile=False)
+        model.save("google_stock_price_prediction_model.keras", save_format="keras")
+        scaler = joblib.load("stock_price_scaler.pkl")
+        return model, scaler
+    except Exception as e:
+        st.error(f"Error loading model or scaler: {e}")
+        st.stop()
 
 model, scaler = load_ml_components()
 
@@ -336,33 +340,80 @@ lookback_days = st.sidebar.slider(
 prediction_days = st.sidebar.slider(
     "Prediction Horizon (days)", min_value=1, max_value=30, value=7
 )
+
 # 6.  DATA PIPELINE
 @st.cache_data
 def get_stock_data():
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=365 * 3)
-    return yf.download("GOOG", start=start_date, end=end_date)
+    try:
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365 * 3)
+        data = yf.download("GOOG", start=start_date, end=end_date, progress=False)
+        
+        # Check if data is empty
+        if data.empty:
+            st.error("No data retrieved from Yahoo Finance. Please try again later.")
+            st.stop()
+        
+        # Drop any rows with NaN values
+        data = data.dropna()
+        
+        return data
+    except Exception as e:
+        st.error(f"Error downloading stock data: {e}")
+        st.stop()
 
 def prepare_data(data, lookback_window):
-    close_prices = data["Close"].values.reshape(-1, 1)
-    scaled_data = scaler.transform(close_prices)
-    x_data = []
-    for i in range(lookback_window, len(scaled_data)):
-        x_data.append(scaled_data[i - lookback_window : i])
-    return np.array(x_data), close_prices.flatten()
+    try:
+        # Extract close prices and ensure no NaN values
+        close_prices = data["Close"].values.reshape(-1, 1)
+        
+        # Check for NaN or infinite values
+        if np.isnan(close_prices).any() or np.isinf(close_prices).any():
+            raise ValueError("Data contains NaN or infinite values")
+        
+        # Ensure we have enough data
+        if len(close_prices) < lookback_window:
+            raise ValueError(f"Not enough data. Need at least {lookback_window} days, but got {len(close_prices)}")
+        
+        # Transform the data
+        scaled_data = scaler.transform(close_prices)
+        
+        # Prepare sequences
+        x_data = []
+        for i in range(lookback_window, len(scaled_data)):
+            x_data.append(scaled_data[i - lookback_window : i])
+        
+        return np.array(x_data), close_prices.flatten()
+    
+    except Exception as e:
+        st.error(f"Error preparing data: {e}")
+        st.stop()
 
 def make_predictions(model, last_sequence, days_to_predict):
-    predictions = []
-    current_sequence = last_sequence.copy()
-    for _ in range(days_to_predict):
-        next_pred = model.predict(current_sequence.reshape(1, -1, 1))[0][0]
-        predictions.append(next_pred)
-        current_sequence = np.roll(current_sequence, -1)
-        current_sequence[-1] = next_pred
-    return scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
+    try:
+        predictions = []
+        current_sequence = last_sequence.copy()
+        
+        for _ in range(days_to_predict):
+            next_pred = model.predict(current_sequence.reshape(1, -1, 1), verbose=0)[0][0]
+            predictions.append(next_pred)
+            current_sequence = np.roll(current_sequence, -1)
+            current_sequence[-1] = next_pred
+        
+        return scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
+    
+    except Exception as e:
+        st.error(f"Error making predictions: {e}")
+        st.stop()
 
 # 7.  MAIN DASHBOARD
 data = get_stock_data()
+
+# Check if we have enough data for the lookback window
+if len(data) < lookback_days:
+    st.error(f"Not enough data available. Need at least {lookback_days} days, but only have {len(data)} days.")
+    st.stop()
+
 x_data, close_prices = prepare_data(data, lookback_days)
 predictions = make_predictions(model, x_data[-1], prediction_days)
 
