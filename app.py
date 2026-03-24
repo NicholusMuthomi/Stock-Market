@@ -395,12 +395,17 @@ def make_predictions(model, last_sequence, days_to_predict):
         current_sequence = last_sequence.copy()
         
         for _ in range(days_to_predict):
-            next_pred = model.predict(current_sequence.reshape(1, -1, 1), verbose=0)[0][0]
-            predictions.append(next_pred)
-            current_sequence = np.roll(current_sequence, -1)
-            current_sequence[-1] = next_pred
+            pred_scaled = model.predict(
+                current_sequence.reshape(1, current_sequence.shape[0], 1),
+                verbose=0
+            )[0][0]
+            predictions.append(pred_scaled)
+            # Shift window by 1, append new prediction
+            current_sequence = np.append(current_sequence[1:], pred_scaled)
         
-        return scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
+        return scaler.inverse_transform(
+            np.array(predictions).reshape(-1, 1)
+        ).flatten()
     
     except Exception as e:
         st.error(f"Error making predictions: {e}")
