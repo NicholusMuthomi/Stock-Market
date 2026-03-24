@@ -362,31 +362,32 @@ def get_stock_data():
         st.error(f"Error downloading stock data: {e}")
         st.stop()
 
-def prepare_data(data, lookback_window):
+def make_predictions(model, last_sequence, days_to_predict, scaler):
     try:
-        # Extract close prices and ensure no NaN values
-        close_prices = data["Close"].values.reshape(-1, 1)
-        
-        # Check for NaN or infinite values
-        if np.isnan(close_prices).any() or np.isinf(close_prices).any():
-            raise ValueError("Data contains NaN or infinite values")
-        
-        # Ensure we have enough data
-        if len(close_prices) < lookback_window:
-            raise ValueError(f"Not enough data. Need at least {lookback_window} days, but got {len(close_prices)}")
-        
-        # Transform the data
-        scaled_data = scaler.transform(close_prices)
-        
-        # Prepare sequences
-        x_data = []
-        for i in range(lookback_window, len(scaled_data)):
-            x_data.append(scaled_data[i - lookback_window : i])
-        
-        return np.array(x_data), close_prices.flatten()
-    
+        predictions = []
+        current_sequence = last_sequence.copy()   # shape: (window, 6)
+
+        for _ in range(days_to_predict):
+            pred_scaled = model.predict(
+                current_sequence.reshape(1, current_sequence.shape[0], current_sequence.shape[1]),
+                verbose=0
+            )[0][0]
+            predictions.append(pred_scaled)
+
+            # Build next row: use predicted close in col 0, repeat last known values for other features
+            next_row = current_sequence[-1].copy()
+            next_row[0] = pred_scaled
+            current_sequence = np.vstack([current_sequence[1:], next_row])
+
+        # Inverse-transform only the close column (col 0)
+        # Build a dummy full-feature array for inverse_transform
+        dummy = np.zeros((len(predictions), scaler.n_features_in_))
+        dummy[:, 0] = predictions
+        inv = scaler.inverse_transform(dummy)
+        return inv[:, 0]
+
     except Exception as e:
-        st.error(f"Error preparing data: {e}")
+        st.error(f"Error making predictions: {e}")
         st.stop()
 
 def make_predictions(model, last_sequence, days_to_predict):
@@ -420,7 +421,7 @@ if len(data) < lookback_days:
     st.stop()
 
 x_data, close_prices = prepare_data(data, lookback_days)
-predictions = make_predictions(model, x_data[-1], prediction_days)
+predictions = make_predictions(model, x_data[-1], prediction_days, scaler)
 
 last_date = data.index[-1]
 future_dates = [last_date + timedelta(days=i) for i in range(1, prediction_days + 1)]
