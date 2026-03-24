@@ -362,52 +362,71 @@ def get_stock_data():
         st.error(f"Error downloading stock data: {e}")
         st.stop()
 
-def make_predictions(model, last_sequence, days_to_predict, scaler):
+def prepare_data(data, lookback_window):
+    try:
+        close = data["Close"].squeeze()
+        volume = data["Volume"].squeeze()
+
+        # Reproduce the exact 6-feature set from the notebook
+        ma50       = close.rolling(window=50).mean()
+        ma100      = close.rolling(window=100).mean()
+        
+        from ta.momentum import RSIIndicator
+        from ta.volatility import BollingerBands
+        rsi        = RSIIndicator(close, window=14).rsi()
+        bb         = BollingerBands(close, window=20)
+        bb_width   = bb.bollinger_hband() - bb.bollinger_lband()
+        vol_ma5    = volume.rolling(5).mean()
+        vol_ratio  = volume / vol_ma5
+
+        feature_df = pd.concat([close, ma50, ma100, rsi, bb_width, vol_ratio], axis=1)
+        feature_df.columns = ["Close", "MA50", "MA100", "RSI", "BB_width", "VolRatio"]
+        feature_df = feature_df.dropna().reset_index(drop=True)
+
+        price_data = feature_df.values  # shape: (N, 6)
+
+        if len(price_data) < lookback_window:
+            raise ValueError(f"Need at least {lookback_window} rows, got {len(price_data)}")
+
+        # Use the SAME scaler saved from the notebook (fitted on 6 features)
+        scaled_data = scaler.transform(price_data)
+
+        x_data = []
+        for i in range(lookback_window, len(scaled_data)):
+            x_data.append(scaled_data[i - lookback_window : i])  # shape: (window, 6)
+
+        return np.array(x_data), feature_df["Close"].values
+
+    except Exception as e:
+        st.error(f"Error preparing data: {e}")
+        st.stop()
+
+
+def make_predictions(model, last_sequence, days_to_predict):
     try:
         predictions = []
-        current_sequence = last_sequence.copy()   # shape: (window, 6)
+        current_sequence = last_sequence.copy()  # shape: (window, 6)
 
         for _ in range(days_to_predict):
+            # Model now correctly expects (1, window, 6)
             pred_scaled = model.predict(
                 current_sequence.reshape(1, current_sequence.shape[0], current_sequence.shape[1]),
                 verbose=0
             )[0][0]
             predictions.append(pred_scaled)
 
-            # Build next row: use predicted close in col 0, repeat last known values for other features
+            # Shift window: copy last row, update only the close price column (col 0)
             next_row = current_sequence[-1].copy()
             next_row[0] = pred_scaled
             current_sequence = np.vstack([current_sequence[1:], next_row])
 
-        # Inverse-transform only the close column (col 0)
-        # Build a dummy full-feature array for inverse_transform
+        # Inverse-transform using the 6-feature scaler
+        # Build dummy array: put predictions in col 0, zeros elsewhere
         dummy = np.zeros((len(predictions), scaler.n_features_in_))
         dummy[:, 0] = predictions
         inv = scaler.inverse_transform(dummy)
-        return inv[:, 0]
+        return inv[:, 0]  # return only the close price column
 
-    except Exception as e:
-        st.error(f"Error making predictions: {e}")
-        st.stop()
-
-def make_predictions(model, last_sequence, days_to_predict):
-    try:
-        predictions = []
-        current_sequence = last_sequence.copy()
-        
-        for _ in range(days_to_predict):
-            pred_scaled = model.predict(
-                current_sequence.reshape(1, current_sequence.shape[0], 1),
-                verbose=0
-            )[0][0]
-            predictions.append(pred_scaled)
-            # Shift window by 1, append new prediction
-            current_sequence = np.append(current_sequence[1:], pred_scaled)
-        
-        return scaler.inverse_transform(
-            np.array(predictions).reshape(-1, 1)
-        ).flatten()
-    
     except Exception as e:
         st.error(f"Error making predictions: {e}")
         st.stop()
@@ -421,7 +440,7 @@ if len(data) < lookback_days:
     st.stop()
 
 x_data, close_prices = prepare_data(data, lookback_days)
-predictions = make_predictions(model, x_data[-1], prediction_days, scaler)
+predictions = make_predictions(model, x_data[-1], prediction_days)
 
 last_date = data.index[-1]
 future_dates = [last_date + timedelta(days=i) for i in range(1, prediction_days + 1)]
