@@ -7,6 +7,7 @@ import joblib
 import os
 from datetime import datetime, timedelta
 from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import load_model
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -294,6 +295,7 @@ st.markdown(
 }
 
 .metric-delta {
+    font-size: 0.875rem;
     color: white !important;
     margin-top: 0.25rem;
 }
@@ -305,113 +307,14 @@ st.markdown(
 # 3.  LOAD ML ARTEFACTS
 @st.cache_resource
 def load_ml_components():
-    """
-    Load the Keras model robustly, handling quantization_config compatibility
-    between different Keras versions (3.x).
-    """
-    model_path = "google_stock_price_prediction_model.keras"
-    scaler_path = "stock_price_scaler.pkl"
-
-    # --- Load scaler ---
     try:
-        scaler = joblib.load(scaler_path)
+        model = load_model("google_stock_price_prediction_model.keras", compile=False)
+        model.save("google_stock_price_prediction_model.keras", save_format="keras")
+        scaler = joblib.load("stock_price_scaler.pkl")
+        return model, scaler
     except Exception as e:
-        st.error(f"Failed to load scaler: {e}")
+        st.error(f"Error loading model or scaler: {e}")
         st.stop()
-
-    # --- Strategy 1: Standard load (works if Keras versions match) ---
-    try:
-        from tensorflow.keras.models import load_model
-        model = load_model(model_path, compile=False)
-        return model, scaler
-    except Exception as primary_error:
-        pass  # Fall through to alternative strategies
-
-    # --- Strategy 2: Patch Dense to accept quantization_config, then load ---
-    try:
-        import tensorflow as tf
-        from tensorflow.keras import layers
-
-        # Monkey-patch Dense to silently ignore quantization_config
-        _original_dense_from_config = layers.Dense.from_config.__func__
-
-        @classmethod
-        def _patched_dense_from_config(cls, config):
-            config.pop("quantization_config", None)
-            return _original_dense_from_config(cls, config)
-
-        layers.Dense.from_config = _patched_dense_from_config
-
-        from tensorflow.keras.models import load_model
-        model = load_model(model_path, compile=False)
-
-        # Restore original method
-        layers.Dense.from_config = classmethod(_original_dense_from_config)
-
-        return model, scaler
-    except Exception as patch_error:
-        pass  # Fall through to next strategy
-
-    # --- Strategy 3: Rebuild the model architecture and load weights ---
-    try:
-        import tensorflow as tf
-        import json, zipfile, tempfile
-
-        # Extract model config from the .keras archive
-        with zipfile.ZipFile(model_path, "r") as zf:
-            config_str = zf.read("config.json").decode("utf-8")
-
-        config = json.loads(config_str)
-
-        # Strip quantization_config from every Dense layer in the config
-        def strip_quantization(cfg):
-            if isinstance(cfg, dict):
-                cfg.pop("quantization_config", None)
-                for v in cfg.values():
-                    strip_quantization(v)
-            elif isinstance(cfg, list):
-                for item in cfg:
-                    strip_quantization(item)
-            return cfg
-
-        clean_config = strip_quantization(config)
-
-        # Rebuild model from cleaned config
-        from tensorflow.keras.models import model_from_json
-        model = model_from_json(json.dumps(clean_config), compile=False)
-        feature_df = pd.concat([close, ma50, ma100, rsi, bb_width, vol_ratio], axis=1)
-        feature_df.columns = ["Close", "MA50", "MA100", "RSI", "BB_width", "VolRatio"]
-
-        # Load weights from the same .keras archive
-        with zipfile.ZipFile(model_path, "r") as zf:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                zf.extractall(tmpdir)
-                weights_path = os.path.join(tmpdir, "model.weights.h5")
-                if os.path.exists(weights_path):
-                    model.load_weights(weights_path)
-                else:
-                    # Try legacy weights file name
-                    for name in zf.namelist():
-                        if name.endswith(".weights.h5") or name.endswith("weights.h5"):
-                            alt_path = os.path.join(tmpdir, name)
-                            if os.path.exists(alt_path):
-                                model.load_weights(alt_path)
-                                break
-
-        return model, scaler
-
-    except Exception as rebuild_error:
-        st.error(
-            f"Could not load the model after multiple attempts.\n\n"
-            f"**Root cause:** Keras version mismatch — the model was saved with a newer "
-            f"Keras that adds `quantization_config` to Dense layers, but the current "
-            f"environment does not support it.\n\n"
-            f"**Fix:** Update `requirements.txt` to pin `keras>=3.6.0` and `tensorflow>=2.18.0`, "
-            f"then redeploy.\n\n"
-            f"Technical detail: {rebuild_error}"
-        )
-        st.stop()
-
 
 model, scaler = load_ml_components()
 
@@ -461,79 +364,44 @@ def get_stock_data():
 
 def prepare_data(data, lookback_window):
     try:
-        close = data["Close"].squeeze()
-        volume = data["Volume"].squeeze()
-
-        # --- Compute all 9 features exactly as done in the notebook ---
-        ma50       = close.rolling(window=50).mean()
-        ma100      = close.rolling(window=100).mean()
-
-        from ta.momentum import RSIIndicator
-        from ta.volatility import BollingerBands
-        rsi        = RSIIndicator(close, window=14).rsi()
-        bb         = BollingerBands(close, window=20)
-        bb_width   = bb.bollinger_hband() - bb.bollinger_lband()
-
-        vol_ma5    = volume.rolling(5).mean()
-        vol_ratio  = volume / vol_ma5
-
-        lag1_return   = close.pct_change(1)
-        lag5_return   = close.pct_change(5)
-        price_vs_ma50 = (close / ma50) - 1
-
-        feature_df = pd.concat(
-            [close, ma50, ma100, rsi, bb_width, vol_ratio, lag1_return, lag5_return, price_vs_ma50],
-            axis=1
-        )
-        feature_df.columns = [
-            "Close", "MA50", "MA100", "RSI", "BB_width",
-            "VolRatio", "Lag1_Return", "Lag5_Return", "Price_vs_MA50"
-        ]
-        feature_df = feature_df.dropna().reset_index(drop=True)
-
-        price_data = feature_df.values  # shape: (N, 9)
-
-        if len(price_data) < lookback_window:
-            raise ValueError(f"Need at least {lookback_window} rows, got {len(price_data)}")
-
-        scaled_data = scaler.transform(price_data)
-
+        # Extract close prices and ensure no NaN values
+        close_prices = data["Close"].values.reshape(-1, 1)
+        
+        # Check for NaN or infinite values
+        if np.isnan(close_prices).any() or np.isinf(close_prices).any():
+            raise ValueError("Data contains NaN or infinite values")
+        
+        # Ensure we have enough data
+        if len(close_prices) < lookback_window:
+            raise ValueError(f"Not enough data. Need at least {lookback_window} days, but got {len(close_prices)}")
+        
+        # Transform the data
+        scaled_data = scaler.transform(close_prices)
+        
+        # Prepare sequences
         x_data = []
         for i in range(lookback_window, len(scaled_data)):
             x_data.append(scaled_data[i - lookback_window : i])
-
-        return np.array(x_data), feature_df["Close"].values
-
+        
+        return np.array(x_data), close_prices.flatten()
+    
     except Exception as e:
         st.error(f"Error preparing data: {e}")
         st.stop()
 
-
 def make_predictions(model, last_sequence, days_to_predict):
     try:
         predictions = []
-        current_sequence = last_sequence.copy()  # shape: (window, 6)
-
+        current_sequence = last_sequence.copy()
+        
         for _ in range(days_to_predict):
-            # Model now correctly expects (1, window, 6)
-            pred_scaled = model.predict(
-                current_sequence.reshape(1, current_sequence.shape[0], current_sequence.shape[1]),
-                verbose=0
-            )[0][0]
-            predictions.append(pred_scaled)
-
-            # Shift window: copy last row, update only the close price column (col 0)
-            next_row = current_sequence[-1].copy()
-            next_row[0] = pred_scaled
-            current_sequence = np.vstack([current_sequence[1:], next_row])
-
-        # Inverse-transform using the 6-feature scaler
-        # Build dummy array: put predictions in col 0, zeros elsewhere
-        dummy = np.zeros((len(predictions), scaler.n_features_in_))
-        dummy[:, 0] = predictions
-        inv = scaler.inverse_transform(dummy)
-        return inv[:, 0]  # return only the close price column
-
+            next_pred = model.predict(current_sequence.reshape(1, -1, 1), verbose=0)[0][0]
+            predictions.append(next_pred)
+            current_sequence = np.roll(current_sequence, -1)
+            current_sequence[-1] = next_pred
+        
+        return scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
+    
     except Exception as e:
         st.error(f"Error making predictions: {e}")
         st.stop()
