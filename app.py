@@ -464,33 +464,43 @@ def prepare_data(data, lookback_window):
         close = data["Close"].squeeze()
         volume = data["Volume"].squeeze()
 
-        # Reproduce the exact 6-feature set from the notebook
+        # --- Compute all 9 features exactly as done in the notebook ---
         ma50       = close.rolling(window=50).mean()
         ma100      = close.rolling(window=100).mean()
-        
+
         from ta.momentum import RSIIndicator
         from ta.volatility import BollingerBands
         rsi        = RSIIndicator(close, window=14).rsi()
         bb         = BollingerBands(close, window=20)
         bb_width   = bb.bollinger_hband() - bb.bollinger_lband()
+
         vol_ma5    = volume.rolling(5).mean()
         vol_ratio  = volume / vol_ma5
 
-        feature_df = pd.concat([close, ma50, ma100, rsi, bb_width, vol_ratio], axis=1)
-        feature_df.columns = ["Close", "MA50", "MA100", "RSI", "BB_width", "VolRatio"]
+        lag1_return   = close.pct_change(1)
+        lag5_return   = close.pct_change(5)
+        price_vs_ma50 = (close / ma50) - 1
+
+        feature_df = pd.concat(
+            [close, ma50, ma100, rsi, bb_width, vol_ratio, lag1_return, lag5_return, price_vs_ma50],
+            axis=1
+        )
+        feature_df.columns = [
+            "Close", "MA50", "MA100", "RSI", "BB_width",
+            "VolRatio", "Lag1_Return", "Lag5_Return", "Price_vs_MA50"
+        ]
         feature_df = feature_df.dropna().reset_index(drop=True)
 
-        price_data = feature_df.values  # shape: (N, 6)
+        price_data = feature_df.values  # shape: (N, 9)
 
         if len(price_data) < lookback_window:
             raise ValueError(f"Need at least {lookback_window} rows, got {len(price_data)}")
 
-        # Use the SAME scaler saved from the notebook (fitted on 6 features)
         scaled_data = scaler.transform(price_data)
 
         x_data = []
         for i in range(lookback_window, len(scaled_data)):
-            x_data.append(scaled_data[i - lookback_window : i])  # shape: (window, 6)
+            x_data.append(scaled_data[i - lookback_window : i])
 
         return np.array(x_data), feature_df["Close"].values
 
