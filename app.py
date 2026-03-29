@@ -379,6 +379,8 @@ def load_ml_components():
         # Rebuild model from cleaned config
         from tensorflow.keras.models import model_from_json
         model = model_from_json(json.dumps(clean_config), compile=False)
+        feature_df = pd.concat([close, ma50, ma100, rsi, bb_width, vol_ratio], axis=1)
+        feature_df.columns = ["Close", "MA50", "MA100", "RSI", "BB_width", "VolRatio"]
 
         # Load weights from the same .keras archive
         with zipfile.ZipFile(model_path, "r") as zf:
