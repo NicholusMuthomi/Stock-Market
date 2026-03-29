@@ -7,7 +7,6 @@ import joblib
 import os
 from datetime import datetime, timedelta
 from sklearn.preprocessing import MinMaxScaler
-from keras.models import load_model
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -295,7 +294,6 @@ st.markdown(
 }
 
 .metric-delta {
-    font-size: 0.875rem;
     color: white !important;
     margin-top: 0.25rem;
 }
@@ -307,15 +305,112 @@ st.markdown(
 # 3.  LOAD ML ARTEFACTS
 @st.cache_resource
 def load_ml_components():
+    """
+    Load the Keras model robustly, handling quantization_config compatibility
+    between different Keras versions (3.x).
+    """
+    model_path = "google_stock_price_prediction_model.keras"
+    scaler_path = "stock_price_scaler.pkl"
+
+    # --- Load scaler ---
     try:
-        import os
-        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        model = load_model(os.path.join(BASE_DIR, "google_stock_price_prediction_model.keras"), compile=False)
-        scaler = joblib.load(os.path.join(BASE_DIR, "stock_price_scaler.pkl"))
-        return model, scaler
+        scaler = joblib.load(scaler_path)
     except Exception as e:
-        st.error(f"Error loading model or scaler: {e}")
+        st.error(f"Failed to load scaler: {e}")
         st.stop()
+
+    # --- Strategy 1: Standard load (works if Keras versions match) ---
+    try:
+        from tensorflow.keras.models import load_model
+        model = load_model(model_path, compile=False)
+        return model, scaler
+    except Exception as primary_error:
+        pass  # Fall through to alternative strategies
+
+    # --- Strategy 2: Patch Dense to accept quantization_config, then load ---
+    try:
+        import tensorflow as tf
+        from tensorflow.keras import layers
+
+        # Monkey-patch Dense to silently ignore quantization_config
+        _original_dense_from_config = layers.Dense.from_config.__func__
+
+        @classmethod
+        def _patched_dense_from_config(cls, config):
+            config.pop("quantization_config", None)
+            return _original_dense_from_config(cls, config)
+
+        layers.Dense.from_config = _patched_dense_from_config
+
+        from tensorflow.keras.models import load_model
+        model = load_model(model_path, compile=False)
+
+        # Restore original method
+        layers.Dense.from_config = classmethod(_original_dense_from_config)
+
+        return model, scaler
+    except Exception as patch_error:
+        pass  # Fall through to next strategy
+
+    # --- Strategy 3: Rebuild the model architecture and load weights ---
+    try:
+        import tensorflow as tf
+        import json, zipfile, tempfile
+
+        # Extract model config from the .keras archive
+        with zipfile.ZipFile(model_path, "r") as zf:
+            config_str = zf.read("config.json").decode("utf-8")
+
+        config = json.loads(config_str)
+
+        # Strip quantization_config from every Dense layer in the config
+        def strip_quantization(cfg):
+            if isinstance(cfg, dict):
+                cfg.pop("quantization_config", None)
+                for v in cfg.values():
+                    strip_quantization(v)
+            elif isinstance(cfg, list):
+                for item in cfg:
+                    strip_quantization(item)
+            return cfg
+
+        clean_config = strip_quantization(config)
+
+        # Rebuild model from cleaned config
+        from tensorflow.keras.models import model_from_json
+        model = model_from_json(json.dumps(clean_config), compile=False)
+
+        # Load weights from the same .keras archive
+        with zipfile.ZipFile(model_path, "r") as zf:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zf.extractall(tmpdir)
+                weights_path = os.path.join(tmpdir, "model.weights.h5")
+                if os.path.exists(weights_path):
+                    model.load_weights(weights_path)
+                else:
+                    # Try legacy weights file name
+                    for name in zf.namelist():
+                        if name.endswith(".weights.h5") or name.endswith("weights.h5"):
+                            alt_path = os.path.join(tmpdir, name)
+                            if os.path.exists(alt_path):
+                                model.load_weights(alt_path)
+                                break
+
+        return model, scaler
+
+    except Exception as rebuild_error:
+        st.error(
+            f"Could not load the model after multiple attempts.\n\n"
+            f"**Root cause:** Keras version mismatch — the model was saved with a newer "
+            f"Keras that adds `quantization_config` to Dense layers, but the current "
+            f"environment does not support it.\n\n"
+            f"**Fix:** Update `requirements.txt` to pin `keras>=3.6.0` and `tensorflow>=2.18.0`, "
+            f"then redeploy.\n\n"
+            f"Technical detail: {rebuild_error}"
+        )
+        st.stop()
+
+
 model, scaler = load_ml_components()
 
 # 4.  HEADER 
