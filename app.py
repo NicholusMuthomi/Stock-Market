@@ -7,7 +7,7 @@ import joblib
 import os
 from datetime import datetime, timedelta
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import load_model
+from keras.models import load_model
 import plotly.graph_objects as go
 import plotly.express as px
 
