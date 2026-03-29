@@ -1,5 +1,5 @@
-tensorflow==2.19.0
-keras==3.10.0
+tensorflow==2.16.1
+keras==3.3.0
 ml-dtypes>=0.2.0
 streamlit
 pandas
@@ -8,3 +8,4 @@ scikit-learn
 matplotlib
 yfinance
 plotly
+ta
