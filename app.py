@@ -308,14 +308,14 @@ st.markdown(
 @st.cache_resource
 def load_ml_components():
     try:
-        model = load_model("google_stock_price_prediction_model.keras", compile=False)
-        model.save("google_stock_price_prediction_model.keras", save_format="keras")
-        scaler = joblib.load("stock_price_scaler.pkl")
+        import os
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        model = load_model(os.path.join(BASE_DIR, "google_stock_price_prediction_model.keras"), compile=False)
+        scaler = joblib.load(os.path.join(BASE_DIR, "stock_price_scaler.pkl"))
         return model, scaler
     except Exception as e:
         st.error(f"Error loading model or scaler: {e}")
         st.stop()
-
 model, scaler = load_ml_components()
 
 # 4.  HEADER 
