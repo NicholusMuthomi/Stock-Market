@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # 1.  GLOBAL STYLING
-st.set_page_config(page_title="Google Stock Predictor", layout="wide")
+st.set_page_config(page_title="Google Stock Prediction", layout="wide")
 
 st.markdown(
     """
