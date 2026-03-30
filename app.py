@@ -10,10 +10,8 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import load_model
 import plotly.graph_objects as go
 import plotly.express as px
-from ta.momentum import RSIIndicator
-from ta.volatility import BollingerBands
 
-# 1.  GLOBAL STYLING
+# 1.  GLOBAL STYLING 
 st.set_page_config(page_title="Google Stock Predictor", layout="wide")
 
 st.markdown(
@@ -320,16 +318,13 @@ def load_ml_components():
 
 model, scaler = load_ml_components()
 
-# Detect how many features the scaler expects
-N_FEATURES = scaler.n_features_in_
-
-# 4.  HEADER
+# 4.  HEADER 
 st.markdown(
     """
 <div class="card" style="text-align:center;">
   <h1>Google Stock Price Predictor</h1>
   <p style="color:var(--text-muted);margin:0;">
-     This application uses a trained LSTM neural network to predict Google (GOOG) stock prices based on historical data.
+     This application uses a trained LSTM neural network to predict Google (GOOG) stock prices based on historical data. 
     The model was trained on 20 years of daily stock data from Yahoo Finance.
   </p>
 </div>
@@ -337,7 +332,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# 5.  SIDEBAR
+# 5.  SIDEBAR 
 st.sidebar.header("Settings")
 lookback_days = st.sidebar.slider(
     "Lookback Window (days)", min_value=50, max_value=200, value=100
@@ -353,165 +348,81 @@ def get_stock_data():
         end_date = datetime.now()
         start_date = end_date - timedelta(days=365 * 3)
         data = yf.download("GOOG", start=start_date, end=end_date, progress=False)
-
+        
+        # Check if data is empty
         if data.empty:
             st.error("No data retrieved from Yahoo Finance. Please try again later.")
             st.stop()
-
+        
+        # Drop any rows with NaN values
         data = data.dropna()
+        
         return data
     except Exception as e:
         st.error(f"Error downloading stock data: {e}")
         st.stop()
 
-
-def build_features(data, n_features):
-    """
-    Build a feature matrix that matches the number of features the scaler
-    was trained on. Features are added in the same order used in the notebook:
-      1. Close
-      2. MA_50
-      3. MA_100
-      4. RSI_14
-      5. BB_width (BB_upper - BB_lower, window=20)
-      6. Volume_ratio (Volume / Volume_MA5)
-    If n_features > 6, additional features (MA_200, Daily_Return,
-    Volatility_30d) are appended to reach the required count.
-    """
-    # Handle MultiIndex columns produced by newer yfinance versions
-    if isinstance(data.columns, pd.MultiIndex):
-        close = data[("Close", "GOOG")]
-        volume = data[("Volume", "GOOG")]
-    else:
-        close = data["Close"]
-        volume = data["Volume"]
-
-    df = pd.DataFrame(index=data.index)
-    df["Close"] = close
-    df["MA_50"] = close.rolling(window=50).mean()
-    df["MA_100"] = close.rolling(window=100).mean()
-    df["RSI"] = RSIIndicator(close, window=14).rsi()
-
-    bb = BollingerBands(close, window=20)
-    df["BB_width"] = bb.bollinger_hband() - bb.bollinger_lband()
-
-    volume_ma5 = volume.rolling(5).mean()
-    df["Volume_ratio"] = volume / volume_ma5
-
-    # If the scaler was trained on more than 6 features, append extras
-    if n_features >= 7:
-        df["MA_200"] = close.rolling(window=200).mean()
-    if n_features >= 8:
-        df["Daily_Return"] = close.pct_change()
-    if n_features >= 9:
-        df["Volatility_30d"] = df["Daily_Return"].rolling(window=30).std()
-
-    # Keep only as many columns as the scaler expects
-    feature_cols = list(df.columns)[:n_features]
-    df = df[feature_cols]
-
-    # Drop rows with any NaN (caused by rolling windows)
-    df = df.dropna()
-
-    return df
-
-
-def prepare_data(data, lookback_window, n_features):
+def prepare_data(data, lookback_window):
     try:
-        feature_df = build_features(data, n_features)
-
-        if len(feature_df) < lookback_window:
-            raise ValueError(
-                f"Not enough data after feature engineering. "
-                f"Need at least {lookback_window} rows, got {len(feature_df)}."
-            )
-
-        feature_array = feature_df.values  # shape: (T, n_features)
-
-        # Validate before transforming
-        if np.isnan(feature_array).any() or np.isinf(feature_array).any():
-            raise ValueError("Feature matrix contains NaN or infinite values.")
-
-        scaled = scaler.transform(feature_array)  # shape: (T, n_features)
-
-        # Build sequences
+        # Extract close prices and ensure no NaN values
+        close_prices = data["Close"].values.reshape(-1, 1)
+        
+        # Check for NaN or infinite values
+        if np.isnan(close_prices).any() or np.isinf(close_prices).any():
+            raise ValueError("Data contains NaN or infinite values")
+        
+        # Ensure we have enough data
+        if len(close_prices) < lookback_window:
+            raise ValueError(f"Not enough data. Need at least {lookback_window} days, but got {len(close_prices)}")
+        
+        # Transform the data
+        scaled_data = scaler.transform(close_prices)
+        
+        # Prepare sequences
         x_data = []
-        for i in range(lookback_window, len(scaled)):
-            x_data.append(scaled[i - lookback_window : i])  # shape: (lookback, n_features)
-
-        x_array = np.array(x_data)  # shape: (N, lookback, n_features)
-
-        # Close prices aligned to the same rows as x_data targets
-        close_prices = feature_df["Close"].values
-
-        return x_array, close_prices
-
+        for i in range(lookback_window, len(scaled_data)):
+            x_data.append(scaled_data[i - lookback_window : i])
+        
+        return np.array(x_data), close_prices.flatten()
+    
     except Exception as e:
         st.error(f"Error preparing data: {e}")
         st.stop()
 
-
-def make_predictions(model, last_sequence, days_to_predict, n_features):
-    """
-    Iteratively predict future close prices.
-    last_sequence shape: (lookback, n_features)
-    For each step, predict the next close (column 0), then shift the window
-    forward by updating column 0 of the new timestep with the predicted value
-    and padding the remaining feature columns with the last known values.
-    Finally, inverse-transform using only column 0 of the scaler.
-    """
+def make_predictions(model, last_sequence, days_to_predict):
     try:
-        predictions_scaled = []
-        current_seq = last_sequence.copy()  # (lookback, n_features)
-
+        predictions = []
+        current_sequence = last_sequence.copy()
+        
         for _ in range(days_to_predict):
-            # Predict expects shape (1, lookback, n_features)
-            next_pred_scaled = model.predict(
-                current_seq.reshape(1, current_seq.shape[0], current_seq.shape[1]),
-                verbose=0,
-            )[0][0]
-
-            predictions_scaled.append(next_pred_scaled)
-
-            # Build new row: use last known values for auxiliary features,
-            # update close (column 0) with the new prediction
-            new_row = current_seq[-1].copy()
-            new_row[0] = next_pred_scaled
-
-            # Shift window forward
-            current_seq = np.roll(current_seq, -1, axis=0)
-            current_seq[-1] = new_row
-
-        # Inverse-transform only the close-price column
-        # Build a dummy array with n_features columns, zeros everywhere except col 0
-        dummy = np.zeros((len(predictions_scaled), n_features))
-        dummy[:, 0] = predictions_scaled
-        inv = scaler.inverse_transform(dummy)
-        return inv[:, 0]
-
+            next_pred = model.predict(current_sequence.reshape(1, -1, 1), verbose=0)[0][0]
+            predictions.append(next_pred)
+            current_sequence = np.roll(current_sequence, -1)
+            current_sequence[-1] = next_pred
+        
+        return scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
+    
     except Exception as e:
         st.error(f"Error making predictions: {e}")
         st.stop()
 
-
 # 7.  MAIN DASHBOARD
 data = get_stock_data()
 
-if len(data) < lookback_days + 200:  # 200 for MA_200 rolling window
-    st.error(
-        f"Not enough data available. Need at least {lookback_days + 200} days of history."
-    )
+# Check if we have enough data for the lookback window
+if len(data) < lookback_days:
+    st.error(f"Not enough data available. Need at least {lookback_days} days, but only have {len(data)} days.")
     st.stop()
 
-x_data, close_prices = prepare_data(data, lookback_days, N_FEATURES)
-predictions = make_predictions(model, x_data[-1], prediction_days, N_FEATURES)
+x_data, close_prices = prepare_data(data, lookback_days)
+predictions = make_predictions(model, x_data[-1], prediction_days)
 
 last_date = data.index[-1]
 future_dates = [last_date + timedelta(days=i) for i in range(1, prediction_days + 1)]
 
 # --- Metrics row ---
 st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-current_price = float(close_prices[-1])
+current_price = float(data["Close"].iloc[-1])
 next_price = float(predictions[0])
 change_pct = (next_price - current_price) / current_price * 100
 delta_color = "var(--accent-green)" if change_pct >= 0 else "var(--accent-red)"
@@ -529,16 +440,17 @@ with col3:
     )
 st.markdown("</div>", unsafe_allow_html=True)
 
-# --- Chart ---
+# --- Chart
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("Price Chart")
 
 history_df = pd.DataFrame(
-    {"Date": data.index[-len(close_prices):], "Close": close_prices, "Type": "Historical"}
+    {"Date": data.index, "Close": close_prices, "Type": "Historical"}
 )
 prediction_df = pd.DataFrame(
     {"Date": future_dates, "Close": predictions, "Type": "Predicted"}
 )
+combined_df = pd.concat([history_df, prediction_df])
 
 fig = go.Figure()
 fig.add_trace(
@@ -586,22 +498,29 @@ fig.update_layout(
     yaxis_title="Price ($)",
     hovermode="x unified",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(color="white"),
+)
+
+fig.update_layout(
+    paper_bgcolor='rgba(0,0,0,0)',
+    plot_bgcolor='rgba(0,0,0,0)',
+    font=dict(color='white'),
     hoverlabel=dict(
-        bgcolor="rgba(30,30,30,0.8)",
+        bgcolor='rgba(30,30,30,0.8)',
         font_size=14,
-        font_family="Arial",
+        font_family="Arial"
     ),
     xaxis=dict(
-        gridcolor="rgba(255,255,255,0.1)",
-        linecolor="rgba(255,255,255,0.2)",
+        gridcolor='rgba(255,255,255,0.1)',
+        linecolor='rgba(255,255,255,0.2)'
     ),
     yaxis=dict(
-        gridcolor="rgba(255,255,255,0.1)",
-        linecolor="rgba(255,255,255,0.2)",
+        gridcolor='rgba(255,255,255,0.1)',
+        linecolor='rgba(255,255,255,0.2)'
     ),
+    legend=dict(
+        bgcolor='rgba(0,0,0,0.3)',
+        bordercolor='rgba(255,255,255,0.2)'
+    )
 )
 st.plotly_chart(fig, use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
@@ -626,12 +545,12 @@ st.dataframe(
         .format({"Predicted Price": "${:.2f}", "Change %": "{:+.2f}%"})
         .applymap(lambda x: "color: white")
         .set_properties(**{
-            "background-color": "transparent",
-            "border-color": "rgba(255,255,255,0.1)",
+            'background-color': 'transparent',
+            'border-color': 'rgba(255,255,255,0.1)'
         }),
     hide_index=True,
     use_container_width=True,
-    height=(pred_details.shape[0] + 1) * 35 + 3,
+    height=(pred_details.shape[0] + 1) * 35 + 3
 )
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -640,8 +559,8 @@ st.markdown(
     """
 <div class="card" style="text-align:center;margin-top:2rem;">
   <p style="color:var(--text-muted);margin:0;font-size:clamp(0.75rem, 1.5vw, 0.875rem);">
-         Disclaimer: Stock price predictions are based on historical data and trained models.
-        Past performance is not indicative of future results.
+         Disclaimer: Stock price predictions are based on historical data and trained models. 
+        Past performance is not indicative of future results. 
         This tool is for informational purposes only and should not be considered as financial advice.
   </p>
 </div>
