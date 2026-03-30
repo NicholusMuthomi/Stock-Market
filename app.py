@@ -11,7 +11,7 @@ from tensorflow.keras.models import load_model
 import plotly.graph_objects as go
 import plotly.express as px
 
-# 1.  GLOBAL STYLING 
+# 1.  GLOBAL STYLING
 st.set_page_config(page_title="Google Stock Predictor", layout="wide")
 
 st.markdown(
@@ -129,34 +129,6 @@ st.markdown(
     background-position: center;
     background-repeat: no-repeat;
     background-attachment: fixed;
-    background-color: rgba(14, 17, 23, 0.85);
-    background-blend-mode: overlay;
-}
-
-/* Make cards slightly transparent to show background */
-.card {
-    background-color: rgba(22, 27, 34, 0.9);
-}
-
-/* Make sidebar slightly transparent */
-.css-1d391kg {
-    background-color: rgba(22, 27, 34, 0.9) !important;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-<style>
-/* --- Background image --- */
-.stApp {
-    background-image: url("https://media.cnn.com/api/v1/images/stellar/prod/220718124741-google-alphabet-stock-split.jpg?c=original");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
 }
 
 /* --- Cards --- */
@@ -214,7 +186,6 @@ st.markdown(
     color: white !important;
 }
 
-/* --- Table header --- */
 .stDataFrame thead th {
     background-color: rgba(255, 255, 255, 0.2) !important;
     color: white !important;
@@ -222,19 +193,16 @@ st.markdown(
     border-bottom: 1px solid rgba(255, 255, 255, 0.2) !important;
 }
 
-/* --- Table cells --- */
 .stDataFrame tbody td {
     background-color: transparent !important;
     color: white !important;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
-/* --- Hover effects --- */
 .stDataFrame tbody tr:hover {
     background-color: rgba(255, 255, 255, 0.15) !important;
 }
 
-/* --- Scrollbar styling --- */
 .stDataFrame::-webkit-scrollbar {
     height: 6px;
     width: 6px;
@@ -271,7 +239,6 @@ def metric_card(label, value, delta=None):
 st.markdown(
     """
 <style>
-/* --- Metric Cards --- */
 .metric-box {
     background-color: rgba(255, 255, 255, 0.15) !important;
     backdrop-filter: blur(8px);
@@ -280,20 +247,17 @@ st.markdown(
     padding: 1rem 1.25rem;
     transition: all 0.3s ease;
 }
-
 .metric-label {
     color: rgba(255, 255, 255, 0.8) !important;
     font-size: 0.875rem;
     margin-bottom: 0.25rem;
 }
-
 .metric-value {
     font-size: 1.5rem;
     font-weight: 700;
     color: white !important;
     text-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
-
 .metric-delta {
     font-size: 0.875rem;
     color: white !important;
@@ -305,26 +269,66 @@ st.markdown(
 )
 
 # 3.  LOAD ML ARTEFACTS
+#
+# The saved scaler (stock_price_scaler.pkl) may have been serialised after
+# extra feature columns were added in the notebook (MA columns, daily returns,
+# volatility, etc.), which causes the "X has 1 feature but MinMaxScaler is
+# expecting N features" error at inference time.
+#
+# The notebook trains the model exclusively on Close prices scaled with a
+# fresh MinMaxScaler(feature_range=(0, 1)) fitted on that single column.
+# We therefore ignore the saved scaler and always build a fresh one here,
+# fitted on the same 20-year Close price history used during training.
+# This matches the notebook exactly and eliminates the feature-mismatch error.
+
 @st.cache_resource
 def load_ml_components():
     try:
         model = load_model("google_stock_price_prediction_model.keras", compile=False)
         model.save("google_stock_price_prediction_model.keras", save_format="keras")
-        scaler = joblib.load("stock_price_scaler.pkl")
-        return model, scaler
+        return model
     except Exception as e:
-        st.error(f"Error loading model or scaler: {e}")
+        st.error(f"Error loading model: {e}")
         st.stop()
 
-model, scaler = load_ml_components()
+@st.cache_data
+def get_training_scaler():
+    """
+    Reproduce the scaler exactly as the notebook did:
+    - Download 20 years of GOOG Close prices
+    - Fit MinMaxScaler(feature_range=(0, 1)) on that single column
+    This guarantees the scaler always expects exactly 1 feature.
+    """
+    try:
+        end = datetime.now()
+        start = datetime(end.year - 20, end.month, end.day)
+        training_data = yf.download("GOOG", start=start, end=end, progress=False)
+        training_data = training_data.dropna()
 
-# 4.  HEADER 
+        # Handle potential MultiIndex columns (yfinance >= 0.2.x)
+        if ("Close", "GOOG") in training_data.columns:
+            close_prices = training_data[("Close", "GOOG")]
+        else:
+            close_prices = training_data["Close"]
+
+        price_data = close_prices.values.reshape(-1, 1)
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaler.fit(price_data)
+        return scaler
+    except Exception as e:
+        st.error(f"Error building scaler: {e}")
+        st.stop()
+
+model = load_ml_components()
+scaler = get_training_scaler()
+
+# 4.  HEADER
 st.markdown(
     """
 <div class="card" style="text-align:center;">
   <h1>Google Stock Price Predictor</h1>
   <p style="color:var(--text-muted);margin:0;">
-     This application uses a trained LSTM neural network to predict Google (GOOG) stock prices based on historical data. 
+    This application uses a trained LSTM neural network to predict Google (GOOG) stock prices based on historical data.
     The model was trained on 20 years of daily stock data from Yahoo Finance.
   </p>
 </div>
@@ -332,7 +336,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# 5.  SIDEBAR 
+# 5.  SIDEBAR
 st.sidebar.header("Settings")
 lookback_days = st.sidebar.slider(
     "Lookback Window (days)", min_value=50, max_value=200, value=100
@@ -342,76 +346,83 @@ prediction_days = st.sidebar.slider(
 )
 
 # 6.  DATA PIPELINE
+
 @st.cache_data
 def get_stock_data():
     try:
         end_date = datetime.now()
         start_date = end_date - timedelta(days=365 * 3)
         data = yf.download("GOOG", start=start_date, end=end_date, progress=False)
-        
-        # Check if data is empty
+
         if data.empty:
             st.error("No data retrieved from Yahoo Finance. Please try again later.")
             st.stop()
-        
-        # Drop any rows with NaN values
+
         data = data.dropna()
-        
         return data
     except Exception as e:
         st.error(f"Error downloading stock data: {e}")
         st.stop()
 
+
 def prepare_data(data, lookback_window):
     try:
-        # Extract close prices and ensure no NaN values
-        close_prices = data["Close"].values.reshape(-1, 1)
-        
-        # Check for NaN or infinite values
+        # Handle potential MultiIndex columns (yfinance >= 0.2.x)
+        if ("Close", "GOOG") in data.columns:
+            close_series = data[("Close", "GOOG")]
+        else:
+            close_series = data["Close"]
+
+        close_prices = close_series.values.reshape(-1, 1)
+
         if np.isnan(close_prices).any() or np.isinf(close_prices).any():
             raise ValueError("Data contains NaN or infinite values")
-        
-        # Ensure we have enough data
+
         if len(close_prices) < lookback_window:
-            raise ValueError(f"Not enough data. Need at least {lookback_window} days, but got {len(close_prices)}")
-        
-        # Transform the data
+            raise ValueError(
+                f"Not enough data. Need at least {lookback_window} days, but got {len(close_prices)}"
+            )
+
+        # scaler was fitted on 1-feature Close prices -- this will never mismatch
         scaled_data = scaler.transform(close_prices)
-        
-        # Prepare sequences
+
         x_data = []
         for i in range(lookback_window, len(scaled_data)):
             x_data.append(scaled_data[i - lookback_window : i])
-        
+
         return np.array(x_data), close_prices.flatten()
-    
+
     except Exception as e:
         st.error(f"Error preparing data: {e}")
         st.stop()
+
 
 def make_predictions(model, last_sequence, days_to_predict):
     try:
         predictions = []
         current_sequence = last_sequence.copy()
-        
+
         for _ in range(days_to_predict):
             next_pred = model.predict(current_sequence.reshape(1, -1, 1), verbose=0)[0][0]
             predictions.append(next_pred)
             current_sequence = np.roll(current_sequence, -1)
             current_sequence[-1] = next_pred
-        
+
         return scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
-    
+
     except Exception as e:
         st.error(f"Error making predictions: {e}")
         st.stop()
 
+
 # 7.  MAIN DASHBOARD
+
 data = get_stock_data()
 
-# Check if we have enough data for the lookback window
 if len(data) < lookback_days:
-    st.error(f"Not enough data available. Need at least {lookback_days} days, but only have {len(data)} days.")
+    st.error(
+        f"Not enough data available. Need at least {lookback_days} days, but only have {len(data)} days."
+    )
     st.stop()
 
 x_data, close_prices = prepare_data(data, lookback_days)
@@ -422,7 +433,7 @@ future_dates = [last_date + timedelta(days=i) for i in range(1, prediction_days 
 
 # --- Metrics row ---
 st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-current_price = float(data["Close"].iloc[-1])
+current_price = float(close_prices[-1])
 next_price = float(predictions[0])
 change_pct = (next_price - current_price) / current_price * 100
 delta_color = "var(--accent-green)" if change_pct >= 0 else "var(--accent-red)"
@@ -440,7 +451,7 @@ with col3:
     )
 st.markdown("</div>", unsafe_allow_html=True)
 
-# --- Chart
+# --- Chart ---
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader("Price Chart")
 
@@ -450,7 +461,6 @@ history_df = pd.DataFrame(
 prediction_df = pd.DataFrame(
     {"Date": future_dates, "Close": predictions, "Type": "Predicted"}
 )
-combined_df = pd.concat([history_df, prediction_df])
 
 fig = go.Figure()
 fig.add_trace(
@@ -497,31 +507,33 @@ fig.update_layout(
     xaxis_title="Date",
     yaxis_title="Price ($)",
     hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-)
-
-fig.update_layout(
-    paper_bgcolor='rgba(0,0,0,0)',
-    plot_bgcolor='rgba(0,0,0,0)',
-    font=dict(color='white'),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color="white"),
     hoverlabel=dict(
-        bgcolor='rgba(30,30,30,0.8)',
+        bgcolor="rgba(30,30,30,0.8)",
         font_size=14,
-        font_family="Arial"
+        font_family="Arial",
     ),
     xaxis=dict(
-        gridcolor='rgba(255,255,255,0.1)',
-        linecolor='rgba(255,255,255,0.2)'
+        gridcolor="rgba(255,255,255,0.1)",
+        linecolor="rgba(255,255,255,0.2)",
     ),
     yaxis=dict(
-        gridcolor='rgba(255,255,255,0.1)',
-        linecolor='rgba(255,255,255,0.2)'
+        gridcolor="rgba(255,255,255,0.1)",
+        linecolor="rgba(255,255,255,0.2)",
     ),
     legend=dict(
-        bgcolor='rgba(0,0,0,0.3)',
-        bordercolor='rgba(255,255,255,0.2)'
-    )
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1,
+        bgcolor="rgba(0,0,0,0.3)",
+        bordercolor="rgba(255,255,255,0.2)",
+    ),
 )
+
 st.plotly_chart(fig, use_container_width=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -541,16 +553,17 @@ pred_details.at[0, "Change %"] = (
 ) / current_price * 100
 
 st.dataframe(
-    pred_details.style
-        .format({"Predicted Price": "${:.2f}", "Change %": "{:+.2f}%"})
-        .applymap(lambda x: "color: white")
-        .set_properties(**{
-            'background-color': 'transparent',
-            'border-color': 'rgba(255,255,255,0.1)'
-        }),
+    pred_details.style.format(
+        {"Predicted Price": "${:.2f}", "Change %": "{:+.2f}%"}
+    ).set_properties(
+        **{
+            "background-color": "transparent",
+            "border-color": "rgba(255,255,255,0.1)",
+        }
+    ),
     hide_index=True,
     use_container_width=True,
-    height=(pred_details.shape[0] + 1) * 35 + 3
+    height=(pred_details.shape[0] + 1) * 35 + 3,
 )
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -559,9 +572,9 @@ st.markdown(
     """
 <div class="card" style="text-align:center;margin-top:2rem;">
   <p style="color:var(--text-muted);margin:0;font-size:clamp(0.75rem, 1.5vw, 0.875rem);">
-         Disclaimer: Stock price predictions are based on historical data and trained models. 
-        Past performance is not indicative of future results. 
-        This tool is for informational purposes only and should not be considered as financial advice.
+    Disclaimer: Stock price predictions are based on historical data and trained models.
+    Past performance is not indicative of future results.
+    This tool is for informational purposes only and should not be considered as financial advice.
   </p>
 </div>
 """,
