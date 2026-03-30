@@ -8,4 +8,4 @@ scikit-learn
 matplotlib
 yfinance
 plotly
-joblib
+ta
