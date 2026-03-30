@@ -129,6 +129,8 @@ st.markdown(
     background-position: center;
     background-repeat: no-repeat;
     background-attachment: fixed;
+    background-color: rgba(14, 17, 23, 0.85);
+    background-blend-mode: overlay;
 }
 
 /* --- Cards --- */
@@ -269,17 +271,6 @@ st.markdown(
 )
 
 # 3.  LOAD ML ARTEFACTS
-#
-# The saved scaler (stock_price_scaler.pkl) may have been serialised after
-# extra feature columns were added in the notebook (MA columns, daily returns,
-# volatility, etc.), which causes the "X has 1 feature but MinMaxScaler is
-# expecting N features" error at inference time.
-#
-# The notebook trains the model exclusively on Close prices scaled with a
-# fresh MinMaxScaler(feature_range=(0, 1)) fitted on that single column.
-# We therefore ignore the saved scaler and always build a fresh one here,
-# fitted on the same 20-year Close price history used during training.
-# This matches the notebook exactly and eliminates the feature-mismatch error.
 
 @st.cache_resource
 def load_ml_components():
@@ -383,7 +374,6 @@ def prepare_data(data, lookback_window):
                 f"Not enough data. Need at least {lookback_window} days, but got {len(close_prices)}"
             )
 
-        # scaler was fitted on 1-feature Close prices -- this will never mismatch
         scaled_data = scaler.transform(close_prices)
 
         x_data = []
