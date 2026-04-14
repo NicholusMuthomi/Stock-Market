@@ -1,8 +1,9 @@
+import re
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import joblib
 import os
 import urllib.request
@@ -11,7 +12,6 @@ from datetime import datetime, timedelta
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import load_model
 import plotly.graph_objects as go
-import plotly.express as px
 
 # 1.  GLOBAL STYLING
 st.set_page_config(page_title="Stock Market Dashboard", layout="wide")
@@ -28,7 +28,7 @@ st.markdown(
   --accent-green: #39d353;
   --accent-red  : #ff7b72;
   --text-primary: #c9d1d9;
-  --text-muted  : #8b949e;
+  --text-muted  : #f1f1f1;
   --font-stack  : 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
@@ -39,23 +39,40 @@ body, .main, .stApp {
   font-family: var(--font-stack);
 }
 
-/* --- Sidebar --- */
-.css-1d391kg {background-color: var(--bg-secondary);}
-.sidebar .sidebar-content {padding: 1.5rem 1rem;}
+/* --- Background image --- */
+.stApp {
+    background-image: url("https://media.cnn.com/api/v1/images/stellar/prod/220718124741-google-alphabet-stock-split.jpg?c=original");
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    background-color: rgba(14, 17, 23, 0.85);
+    background-blend-mode: overlay;
+}
+
+/* --- Sidebar (modern Streamlit selector) --- */
+[data-testid="stSidebar"] {
+    background-color: rgba(255, 255, 255, 0.15) !important;
+    backdrop-filter: blur(8px);
+    border-right: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+[data-testid="stSidebar"] .sidebar-content {padding: 1.5rem 1rem;}
 
 /* --- Headers --- */
 h1, h2, h3, h4, h5, h6 {
-  color: var(--text-primary);
+  color: white !important;
   font-weight: 600;
   margin-bottom: 0.5rem;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 h1 {font-size: 2.25rem;}
 h2 {font-size: 1.75rem;}
 
 /* --- Cards / containers --- */
 .card {
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--bg-tertiary);
+  background-color: rgba(255, 255, 255, 0.15) !important;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
   border-radius: 8px;
   padding: 1.5rem;
   margin-bottom: 1.5rem;
@@ -64,8 +81,8 @@ h2 {font-size: 1.75rem;}
 
 /* --- Buttons --- */
 .stButton > button {
-  background-color: var(--accent-blue);
-  color: #ffffff;
+  background-color: rgba(88, 166, 255, 0.9) !important;
+  color: #ffffff !important;
   border: none;
   border-radius: 6px;
   padding: 0.5rem 1.25rem;
@@ -74,7 +91,7 @@ h2 {font-size: 1.75rem;}
   transition: background-color 0.2s ease;
 }
 .stButton > button:hover {
-  background-color: var(--accent-green);
+  background-color: rgba(57, 211, 83, 0.9) !important;
 }
 
 /* --- Metric boxes --- */
@@ -85,22 +102,32 @@ h2 {font-size: 1.75rem;}
 }
 .metric-box {
   flex: 1;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--bg-tertiary);
+  background-color: rgba(255, 255, 255, 0.15) !important;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
   border-radius: 8px;
   padding: 1rem 1.25rem;
+  transition: all 0.3s ease;
 }
 .metric-label {
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.8) !important;
   font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+  text-align: center;
 }
 .metric-value {
   font-size: 1.5rem;
   font-weight: 700;
-  color: var(--text-primary);
+  color: white !important;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  text-align: center;
 }
 .metric-delta {
   font-size: 0.875rem;
+  color: white !important;
+  margin-top: 0.25rem;
+  text-align: center;
+  display: block;
 }
 
 /* --- Tables --- */
@@ -116,72 +143,7 @@ thead {
   background-color: var(--bg-tertiary);
 }
 tbody tr:nth-child(even) {background-color: var(--bg-secondary);}
-</style>
-""",
-    unsafe_allow_html=True,
-)
 
-st.markdown(
-    """
-<style>
-/* --- Background image --- */
-.stApp {
-    background-image: url("https://media.cnn.com/api/v1/images/stellar/prod/220718124741-google-alphabet-stock-split.jpg?c=original");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
-    background-color: rgba(14, 17, 23, 0.85);
-    background-blend-mode: overlay;
-}
-
-/* --- Cards --- */
-.card {
-    background-color: rgba(255, 255, 255, 0.15) !important;
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.2) !important;
-}
-
-/* --- Sidebar --- */
-.css-1d391kg {
-    background-color: rgba(255, 255, 255, 0.15) !important;
-    backdrop-filter: blur(8px);
-    border-right: 1px solid rgba(255, 255, 255, 0.2) !important;
-}
-
-/* --- Charts --- */
-.plotly-graph-div {
-    background-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* --- Tables --- */
-.stDataFrame {
-    background-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* --- Text contrast --- */
-h1, h2, h3, h4, h5, h6, .metric-value, .metric-label {
-    color: white !important;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-}
-
-/* --- Buttons --- */
-.stButton > button {
-    background-color: rgba(88, 166, 255, 0.9) !important;
-    color: white !important;
-}
-.stButton > button:hover {
-    background-color: rgba(57, 211, 83, 0.9) !important;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-<style>
-/* --- Tables --- */
 .stDataFrame {
     background-color: rgba(255, 255, 255, 0.1) !important;
     backdrop-filter: blur(8px);
@@ -189,28 +151,21 @@ st.markdown(
     border: 1px solid rgba(255, 255, 255, 0.2) !important;
     color: white !important;
 }
-
 .stDataFrame thead th {
     background-color: rgba(255, 255, 255, 0.2) !important;
     color: white !important;
     font-weight: 600;
     border-bottom: 1px solid rgba(255, 255, 255, 0.2) !important;
 }
-
 .stDataFrame tbody td {
     background-color: transparent !important;
     color: white !important;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
-
 .stDataFrame tbody tr:hover {
     background-color: rgba(255, 255, 255, 0.15) !important;
 }
-
-.stDataFrame::-webkit-scrollbar {
-    height: 6px;
-    width: 6px;
-}
+.stDataFrame::-webkit-scrollbar {height: 6px; width: 6px;}
 .stDataFrame::-webkit-scrollbar-track {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 3px;
@@ -218,6 +173,23 @@ st.markdown(
 .stDataFrame::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.3);
     border-radius: 3px;
+}
+
+/* --- Charts --- */
+.plotly-graph-div {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* --- Info banner for non-GOOG tickers --- */
+.info-banner {
+    background-color: rgba(88, 166, 255, 0.15);
+    border: 1px solid rgba(88, 166, 255, 0.4);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    color: white;
+    font-size: 0.95rem;
+    backdrop-filter: blur(8px);
 }
 </style>
 """,
@@ -240,50 +212,6 @@ def metric_card(label, value, delta=None):
         unsafe_allow_html=True,
     )
 
-st.markdown(
-    """
-<style>
-.metric-box {
-    background-color: rgba(255, 255, 255, 0.15) !important;
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.2) !important;
-    border-radius: 8px;
-    padding: 1rem 1.25rem;
-    transition: all 0.3s ease;
-}
-.metric-label {
-    color: rgba(255, 255, 255, 0.8) !important;
-    font-size: 0.875rem;
-    margin-bottom: 0.25rem;
-}
-.metric-value {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: white !important;
-    text-shadow: 0 1px 3px rgba(0,0,0,0.3);
-}
-.metric-delta {
-    font-size: 0.875rem;
-    color: white !important;
-    margin-top: 0.25rem;
-}
-
-/* --- Info banner for non-GOOG tickers --- */
-.info-banner {
-    background-color: rgba(88, 166, 255, 0.15);
-    border: 1px solid rgba(88, 166, 255, 0.4);
-    border-radius: 8px;
-    padding: 1rem 1.25rem;
-    margin-bottom: 1.5rem;
-    color: white;
-    font-size: 0.95rem;
-    backdrop-filter: blur(8px);
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
 # 3.  TICKER CONFIGURATION
 
 TICKERS = {
@@ -300,22 +228,32 @@ GOOG_ONLY_PREDICTION = True  # Only GOOG has a trained model
 
 @st.cache_resource
 def load_ml_components():
+    """
+    Load the pre-trained LSTM model from disk.
+    The model is loaded once and cached for the lifetime of the session.
+    The re-save that was here previously has been removed: it is unnecessary
+    after the first run and will fail silently on read-only deployments
+    (e.g. Streamlit Cloud).
+    """
     try:
         model = load_model("google_stock_price_prediction_model.keras", compile=False)
-        model.save("google_stock_price_prediction_model.keras", save_format="keras")
         return model
     except Exception as e:
         st.error(f"Error loading model: {e}")
         st.stop()
 
-@st.cache_data
+@st.cache_resource
 def get_training_scaler():
     """
-    Reproduce the scaler exactly as the notebook did:
-    - Download 20 years of GOOG Close prices
-    - Fit MinMaxScaler(feature_range=(0, 1)) on that single column
-    This guarantees the scaler always expects exactly 1 feature.
+    Load the MinMaxScaler from disk (saved alongside the model during training).
+    Falls back to re-fitting on 20 years of live GOOG data if the file is absent,
+    but the saved file should always be preferred for consistency.
     """
+    scaler_path = "google_stock_scaler.joblib"
+    if os.path.exists(scaler_path):
+        return joblib.load(scaler_path)
+
+    # Fallback: re-fit from live data (slower, use only during development)
     try:
         end = datetime.now()
         start = datetime(end.year - 20, end.month, end.day)
@@ -323,11 +261,11 @@ def get_training_scaler():
         training_data = training_data.dropna()
 
         if ("Close", "GOOG") in training_data.columns:
-            close_prices = training_data[("Close", "GOOG")]
+            close_col = training_data[("Close", "GOOG")]
         else:
-            close_prices = training_data["Close"]
+            close_col = training_data["Close"]
 
-        price_data = close_prices.values.reshape(-1, 1)
+        price_data = close_col.values.reshape(-1, 1)
         scaler = MinMaxScaler(feature_range=(0, 1))
         scaler.fit(price_data)
         return scaler
@@ -337,6 +275,10 @@ def get_training_scaler():
 
 model = load_ml_components()
 scaler = get_training_scaler()
+
+if model is None or scaler is None:
+    st.error("Critical components (model or scaler) could not be loaded. Please check your deployment files.")
+    st.stop()
 
 # 5.  HEADER
 st.markdown(
@@ -411,14 +353,14 @@ def get_stock_data(ticker):
 
 def extract_close(data, ticker):
     """Safely extract the Close price series regardless of column structure."""
-    if (("Close", ticker)) in data.columns:
+    if ("Close", ticker) in data.columns:
         return data[("Close", ticker)]
     return data["Close"]
 
 
 def extract_volume(data, ticker):
     """Safely extract the Volume series regardless of column structure."""
-    if (("Volume", ticker)) in data.columns:
+    if ("Volume", ticker) in data.columns:
         return data[("Volume", ticker)]
     return data["Volume"]
 
@@ -554,10 +496,25 @@ def fetch_google_news(max_items=5):
         news = []
         for item in items[:max_items]:
             title = item.findtext("title", default="No title")
-            link = item.findtext("link", default="#")
             pub_date = item.findtext("pubDate", default="")
             source_el = item.find("source")
             source = source_el.text if source_el is not None else "Google News"
+
+            # Google News RSS: <link> is a bare text node sitting *between* tags,
+            # so ElementTree's findtext("link") silently returns None.
+            # Instead, iterate the item's child nodes to grab the text tail of
+            # the <link> element, or fall back to the <source url="..."> attribute.
+            link = "#"
+            for child in item:
+                if child.tag == "link":
+                    if child.tail and child.tail.strip():
+                        link = child.tail.strip()
+                        break
+            if link == "#" and source_el is not None:
+                link = source_el.get("url", "#")
+
+            # Strip any stray HTML tags that may appear inside the title text
+            title = re.sub(r"<[^>]+>", "", title).strip()
 
             # Google News RSS appends " - Source" at the end of titles
             if " - " in title:
@@ -625,7 +582,8 @@ if selected_ticker == "GOOG":
     upper_band, lower_band = compute_confidence_band(predictions, close_prices)
 
     last_date = data.index[-1]
-    future_dates = [last_date + timedelta(days=i) for i in range(1, prediction_days + 1)]
+    # Use business days so predictions skip weekends
+    future_dates = pd.bdate_range(start=last_date + timedelta(days=1), periods=prediction_days)
 
     next_price = float(predictions[0])
     change_pct = (next_price - current_price) / current_price * 100
@@ -719,13 +677,13 @@ if selected_ticker == "GOOG":
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02,
             xanchor="right", x=1,
-            bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)",
+            bgcolor="rgba(0,0,0.3)", bordercolor="rgba(255,255,255,0.2)",
         ),
     )
     st.plotly_chart(fig, use_container_width=True)
     st.markdown(
         """
-        <p style="color:rgba(255,255,255,0.55);font-size:0.82rem;margin-top:-0.5rem;padding-bottom:0.5rem;">
+        <p style="color:#DBDBDB;font-size:1rem;margin-top:-0.5rem;padding-bottom:0.5rem;">
         The shaded region represents a 1-sigma confidence band based on 30-day price volatility.
         It widens over time because uncertainty compounds with each additional day of prediction.
         </p>
@@ -787,7 +745,7 @@ if selected_ticker == "GOOG":
     st.subheader("Model Performance (Last 60 Days)")
     st.markdown(
         """
-        <p style="color:rgba(255,255,255,0.65);font-size:0.88rem;margin-bottom:1rem;">
+        <p style="color:rgba(255,255,255,0.65);font-size:1rem;margin-bottom:1rem;">
         These metrics show how the LSTM model performed against actual GOOG prices
         over the last 60 trading days. Lower RMSE and MAE indicate better accuracy.
         Directional accuracy measures how often the model correctly predicted
@@ -865,94 +823,9 @@ if selected_ticker == "GOOG":
     news_items = fetch_google_news(max_items=5)
 
     if news_items:
-        news_html = """
-        <style>
-        .news-row {
-            display: flex;
-            flex-direction: row;
-            gap: 1rem;
-            overflow-x: auto;
-            padding-bottom: 0.85rem;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(255,255,255,0.2) transparent;
-        }
-        .news-row::-webkit-scrollbar {
-            height: 5px;
-        }
-        .news-row::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .news-row::-webkit-scrollbar-thumb {
-            background: rgba(255,255,255,0.25);
-            border-radius: 4px;
-        }
-        .news-card {
-            flex: 0 0 calc(20% - 0.8rem);
-            min-width: 210px;
-            max-width: 260px;
-            background: rgba(255, 255, 255, 0.08);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.18);
-            border-top: 3px solid rgba(88, 166, 255, 0.85);
-            border-radius: 16px;
-            padding: 1.15rem 1.1rem 1rem 1.1rem;
-            height: 190px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            box-shadow:
-                0 4px 16px rgba(0, 0, 0, 0.35),
-                inset 0 1px 0 rgba(255,255,255,0.08);
-            text-decoration: none;
-            transition:
-                background 0.25s ease,
-                transform 0.22s ease,
-                border-top-color 0.25s ease,
-                box-shadow 0.25s ease;
-        }
-        .news-card:hover {
-            background: rgba(255, 255, 255, 0.14);
-            border-top-color: rgba(57, 211, 83, 0.9);
-            transform: translateY(-4px);
-            box-shadow:
-                0 8px 28px rgba(0, 0, 0, 0.45),
-                inset 0 1px 0 rgba(255,255,255,0.12);
-        }
-        .news-card-title {
-            color: rgba(255, 255, 255, 0.95);
-            font-size: 0.865rem;
-            font-weight: 600;
-            line-height: 1.48;
-            margin: 0 0 0.6rem 0;
-            display: -webkit-box;
-            -webkit-line-clamp: 4;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-            text-shadow: 0 1px 3px rgba(0,0,0,0.4);
-        }
-        .news-card-footer {
-            display: flex;
-            flex-direction: column;
-            gap: 0.15rem;
-        }
-        .news-card-source {
-            color: rgba(88, 166, 255, 1);
-            font-size: 0.72rem;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-        }
-        .news-card-date {
-            color: rgba(255, 255, 255, 0.35);
-            font-size: 0.68rem;
-        }
-        </style>
-        <div class="news-row">
-        """
-
+        cards_html = ""
         for article in news_items:
-            news_html += f"""
+            cards_html += f"""
             <a href="{article['link']}" target="_blank" class="news-card">
                 <p class="news-card-title">{article['title']}</p>
                 <div class="news-card-footer">
@@ -962,8 +835,83 @@ if selected_ticker == "GOOG":
             </a>
             """
 
-        news_html += "</div>"
-        st.markdown(news_html, unsafe_allow_html=True)
+        full_html = f"""
+        <style>
+            body {{ margin: 0; padding: 0; background: transparent; }}
+            .news-row {{
+                display: flex;
+                flex-direction: row;
+                gap: 1rem;
+                overflow-x: auto;
+                padding-bottom: 0.85rem;
+                scrollbar-width: thin;
+                scrollbar-color: rgba(255,255,255,0.2) transparent;
+            }}
+            .news-row::-webkit-scrollbar {{ height: 5px; }}
+            .news-row::-webkit-scrollbar-track {{ background: transparent; }}
+            .news-row::-webkit-scrollbar-thumb {{
+                background: rgba(255,255,255,0.25);
+                border-radius: 4px;
+            }}
+            .news-card {{
+                flex: 0 0 calc(20% - 0.8rem);
+                min-width: 210px;
+                max-width: 260px;
+                background: rgba(255, 255, 255, 0.08);
+                backdrop-filter: blur(16px);
+                -webkit-backdrop-filter: blur(16px);
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                border-radius: 16px;
+                padding: 1.15rem 1.1rem 1rem 1.1rem;
+                height: 190px;
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+                text-decoration: none;
+                transition: background 0.25s ease, transform 0.22s ease,
+                            border-top-color 0.25s ease, box-shadow 0.25s ease;
+            }}
+            .news-card:hover {{
+                background: rgba(255, 255, 255, 0.14);
+                border-top-color: rgba(57, 211, 83, 0.9);
+                transform: translateY(-4px);
+                box-shadow: 0 8px 28px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12);
+            }}
+            .news-card-title {{
+                color: rgba(255, 255, 255, 1);
+                font-size: 1rem;
+                font-weight: 600;
+                line-height: 1.48;
+                margin: 0 0 0.6rem 0;
+                display: -webkit-box;
+                -webkit-line-clamp: 4;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }}
+            .news-card-footer {{
+                display: flex;
+                flex-direction: column;
+                gap: 0.15rem;
+            }}
+            .news-card-source {{
+                color: rgba(88, 166, 255, 1);
+                font-size: 0.72rem;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+            }}
+            .news-card-date {{
+                color: rgba(255, 255, 255, 0.35);
+                font-size: 0.68rem;
+                text-align: right;
+            }}
+        </style>
+        <div class="news-row">
+            {cards_html}
+        </div>
+        """
+        components.html(full_html, height=230, scrolling=False)
 
     else:
         st.markdown(
