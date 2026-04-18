@@ -215,29 +215,52 @@ def load_ml_components():
 @st.cache_resource
 def get_training_scaler():
     """
-    Load scaler fitted ONLY on the training portion of the data (everything
-    before the last 90 days).  This ensures the out-of-sample evaluation is
-    genuinely out-of-sample and the scaler has not seen test-period prices.
+    Load the scaler from disk when available (preferred).
+
+    Fallback — build it from scratch:
+      Download 5 years of GOOG history and fit the scaler only on the portion
+      that ends 90 days before today, so the hold-out window stays unseen.
+      Using a fixed 5-year look-back avoids the date-arithmetic bug that
+      produced an empty DataFrame (and the resulting MinMaxScaler crash) when
+      subtracting 20 years from an already-shifted end date.
     """
     scaler_path = "google_stock_scaler.joblib"
     if os.path.exists(scaler_path):
         return joblib.load(scaler_path)
 
     try:
-        end   = datetime.now() - timedelta(days=90)   # hold out last 90 days
-        start = datetime(end.year - 20, end.month, end.day)
-        training_data = yf.download("GOOG", start=start, end=end, progress=False)
-        training_data = training_data.dropna()
+        end_full   = datetime.now()
+        start_full = end_full - timedelta(days=365 * 5)   # 5 years is plenty
 
-        if ("Close", "GOOG") in training_data.columns:
-            close_col = training_data[("Close", "GOOG")]
+        raw = yf.download("GOOG", start=start_full, end=end_full, progress=False)
+        raw = raw.dropna()
+
+        if raw.empty:
+            st.error("Could not download GOOG data to build the scaler.")
+            st.stop()
+
+        # Extract close prices
+        if ("Close", "GOOG") in raw.columns:
+            close_col = raw[("Close", "GOOG")]
+        elif "Close" in raw.columns:
+            close_col = raw["Close"]
         else:
-            close_col = training_data["Close"]
+            st.error("Unexpected column structure from yfinance.")
+            st.stop()
 
-        price_data = close_col.values.reshape(-1, 1)
+        # Fit only on the training slice (everything before the 90-day hold-out)
+        cutoff     = end_full - timedelta(days=90)
+        train_mask = raw.index <= cutoff
+        train_prices = close_col[train_mask].values.reshape(-1, 1)
+
+        if len(train_prices) < 2:
+            # Edge case: if somehow the mask is empty, fit on all data
+            train_prices = close_col.values.reshape(-1, 1)
+
         scaler = MinMaxScaler(feature_range=(0, 1))
-        scaler.fit(price_data)
+        scaler.fit(train_prices)
         return scaler
+
     except Exception as e:
         st.error(f"Error building scaler: {e}")
         st.stop()
