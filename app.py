@@ -689,6 +689,45 @@ def score_sentiment(title: str) -> tuple[str, str]:
     return "Neutral", "var(--accent-blue)"
 
 
+def _fetch_og_image(url: str, timeout: int = 4) -> str:
+    """
+    Try to pull the og:image meta tag from an article URL.
+    Returns the image URL string, or "" on any failure.
+    Google News redirects to the real article; we follow up to 3 redirects.
+    """
+    if not url or url == "#":
+        return ""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # Read only the first 12 KB — enough to find <head> og:image
+            chunk = resp.read(12288).decode("utf-8", errors="ignore")
+
+        # Look for  <meta property="og:image" content="...">
+        # or        <meta content="..." property="og:image">
+        for pattern in (
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+        ):
+            m = re.search(pattern, chunk, re.IGNORECASE)
+            if m:
+                img = m.group(1).strip()
+                if img.startswith("http"):
+                    return img
+        return ""
+    except Exception:
+        return ""
+
+
 @st.cache_data(ttl=1800)
 def fetch_google_news(max_items=5):
     try:
@@ -727,6 +766,7 @@ def fetch_google_news(max_items=5):
                 pub_formatted = pub_date
 
             sentiment_label, sentiment_color = score_sentiment(title)
+            image_url = _fetch_og_image(link)
 
             news.append({
                 "title":           title,
@@ -735,6 +775,7 @@ def fetch_google_news(max_items=5):
                 "published":       pub_formatted,
                 "sentiment":       sentiment_label,
                 "sentiment_color": sentiment_color,
+                "image":           image_url,
             })
 
         return news
@@ -838,7 +879,7 @@ if selected_ticker == "GOOG":
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- Price chart with predictions ---
+    # ── CARD 1: Price chart with predictions ─────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Price Chart with Predictions")
 
@@ -905,150 +946,129 @@ if selected_ticker == "GOOG":
     st.plotly_chart(fig, use_container_width=True)
     st.markdown(
         """
-        <p style="color:#DBDBDB;font-size:1rem;margin-top:-0.5rem;padding-bottom:0.5rem;">
-        Forecast = 60% LSTM autoregressive rollout + 40% linear momentum trend fitted on the last 20 trading days.
-        The confidence band is derived from the model's actual mean absolute error over the last 60 out-of-sample days,
-        and compounds as band = MAE × √k so uncertainty grows correctly with horizon.
+        <p style="color:#DBDBDB;font-size:0.9rem;margin-top:-0.5rem;padding-bottom:0.5rem;">
+        Forecast = 60% LSTM autoregressive rollout + 40% linear momentum trend on the last 20 trading days.
+        Confidence band = MAE x sqrt(k) derived from actual out-of-sample residuals, not a theoretical formula.
         </p>
         """,
         unsafe_allow_html=True,
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- Bollinger Band chart for GOOG ---
+    # ── CARD 2: Technical charts (tabbed) ────────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Bollinger Bands (20-day, 2σ)")
+    st.subheader("Technical Analysis")
+    tab_bb, tab_rsi, tab_macd, tab_vol = st.tabs([
+        "Bollinger Bands", "RSI", "MACD", "Volume"
+    ])
+
     bb_upper, bb_mid, bb_lower = compute_bollinger_bands(close_series)
-    fig_bb = go.Figure()
-    fig_bb.add_trace(go.Scatter(
-        x=data.index, y=bb_upper.values,
-        mode="lines", name="Upper Band",
-        line=dict(color="rgba(255,123,114,0.6)", width=1),
-    ))
-    fig_bb.add_trace(go.Scatter(
-        x=data.index, y=bb_lower.values,
-        mode="lines", name="Lower Band",
-        fill="tonexty", fillcolor="rgba(88,166,255,0.08)",
-        line=dict(color="rgba(88,166,255,0.6)", width=1),
-    ))
-    fig_bb.add_trace(go.Scatter(
-        x=data.index, y=bb_mid.values,
-        mode="lines", name="Middle Band (SMA 20)",
-        line=dict(color="#f0c040", width=1.5, dash="dot"),
-    ))
-    fig_bb.add_trace(go.Scatter(
-        x=data.index, y=close_prices,
-        mode="lines", name="Close",
-        line=dict(color="#58a6ff", width=2),
-    ))
-    fig_bb.update_layout(
-        template="plotly_dark",
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Date", yaxis_title="Price ($)",
-        hovermode="x unified",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02,
-            xanchor="right", x=1,
-            bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)",
-        ),
-    )
-    st.plotly_chart(fig_bb, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    with tab_bb:
+        fig_bb = go.Figure()
+        fig_bb.add_trace(go.Scatter(
+            x=data.index, y=bb_upper.values,
+            mode="lines", name="Upper Band",
+            line=dict(color="rgba(255,123,114,0.6)", width=1),
+        ))
+        fig_bb.add_trace(go.Scatter(
+            x=data.index, y=bb_lower.values,
+            mode="lines", name="Lower Band",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.08)",
+            line=dict(color="rgba(88,166,255,0.6)", width=1),
+        ))
+        fig_bb.add_trace(go.Scatter(
+            x=data.index, y=bb_mid.values,
+            mode="lines", name="Middle Band (SMA 20)",
+            line=dict(color="#f0c040", width=1.5, dash="dot"),
+        ))
+        fig_bb.add_trace(go.Scatter(
+            x=data.index, y=close_prices,
+            mode="lines", name="Close",
+            line=dict(color="#58a6ff", width=2),
+        ))
+        fig_bb.update_layout(
+            template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Date", yaxis_title="Price ($)", hovermode="x unified",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)"),
+        )
+        st.plotly_chart(fig_bb, use_container_width=True)
 
-    # --- RSI chart ---
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("RSI (14-day)")
     rsi_series = compute_rsi(close_series)
-    fig_rsi = go.Figure()
-    fig_rsi.add_trace(go.Scatter(
-        x=data.index, y=rsi_series.values,
-        mode="lines", name="RSI",
-        line=dict(color="#58a6ff", width=2),
-    ))
-    fig_rsi.add_hline(y=70, line_dash="dash", line_color="#ff7b72",
-                      annotation_text="Overbought (70)", annotation_position="bottom right")
-    fig_rsi.add_hline(y=30, line_dash="dash", line_color="#39d353",
-                      annotation_text="Oversold (30)", annotation_position="top right")
-    fig_rsi.update_layout(
-        template="plotly_dark",
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Date", yaxis_title="RSI",
-        yaxis=dict(range=[0, 100], gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-    )
-    st.plotly_chart(fig_rsi, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    with tab_rsi:
+        fig_rsi = go.Figure()
+        fig_rsi.add_trace(go.Scatter(
+            x=data.index, y=rsi_series.values,
+            mode="lines", name="RSI",
+            line=dict(color="#58a6ff", width=2),
+        ))
+        fig_rsi.add_hline(y=70, line_dash="dash", line_color="#ff7b72",
+                          annotation_text="Overbought (70)", annotation_position="bottom right")
+        fig_rsi.add_hline(y=30, line_dash="dash", line_color="#39d353",
+                          annotation_text="Oversold (30)", annotation_position="top right")
+        fig_rsi.update_layout(
+            template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Date", yaxis_title="RSI",
+            yaxis=dict(range=[0, 100], gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+        )
+        st.plotly_chart(fig_rsi, use_container_width=True)
 
-    # --- MACD chart ---
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("MACD (12 / 26 / 9)")
     macd_line, signal_line, histogram = compute_macd(close_series)
-    fig_macd = go.Figure()
-    fig_macd.add_trace(go.Bar(
-        x=data.index, y=histogram.values,
-        name="Histogram",
-        marker_color=[
-            "rgba(57,211,83,0.6)" if v >= 0 else "rgba(255,123,114,0.6)"
-            for v in histogram.values
-        ],
-    ))
-    fig_macd.add_trace(go.Scatter(
-        x=data.index, y=macd_line.values,
-        mode="lines", name="MACD",
-        line=dict(color="#58a6ff", width=2),
-    ))
-    fig_macd.add_trace(go.Scatter(
-        x=data.index, y=signal_line.values,
-        mode="lines", name="Signal",
-        line=dict(color="#ff7b72", width=1.5, dash="dot"),
-    ))
-    fig_macd.update_layout(
-        template="plotly_dark",
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Date", yaxis_title="MACD",
-        hovermode="x unified",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02,
-            xanchor="right", x=1,
-            bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)",
-        ),
-    )
-    st.plotly_chart(fig_macd, use_container_width=True)
+    with tab_macd:
+        fig_macd = go.Figure()
+        fig_macd.add_trace(go.Bar(
+            x=data.index, y=histogram.values, name="Histogram",
+            marker_color=[
+                "rgba(57,211,83,0.6)" if v >= 0 else "rgba(255,123,114,0.6)"
+                for v in histogram.values
+            ],
+        ))
+        fig_macd.add_trace(go.Scatter(
+            x=data.index, y=macd_line.values,
+            mode="lines", name="MACD", line=dict(color="#58a6ff", width=2),
+        ))
+        fig_macd.add_trace(go.Scatter(
+            x=data.index, y=signal_line.values,
+            mode="lines", name="Signal", line=dict(color="#ff7b72", width=1.5, dash="dot"),
+        ))
+        fig_macd.update_layout(
+            template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Date", yaxis_title="MACD", hovermode="x unified",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)"),
+        )
+        st.plotly_chart(fig_macd, use_container_width=True)
+
+    with tab_vol:
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Bar(
+            x=data.index, y=volume_series,
+            name="Volume", marker_color="rgba(88,166,255,0.6)",
+        ))
+        fig_vol.update_layout(
+            template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Date", yaxis_title="Volume",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+        )
+        st.plotly_chart(fig_vol, use_container_width=True)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- Volume chart ---
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Trading Volume")
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Bar(
-        x=data.index, y=volume_series,
-        name="Volume", marker_color="rgba(88,166,255,0.6)",
-    ))
-    fig_vol.update_layout(
-        template="plotly_dark",
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Date", yaxis_title="Volume",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-    )
-    st.plotly_chart(fig_vol, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # --- Prediction table ---
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Forecast Details")
+    # ── CARD 3: Forecast details + Model performance (tabbed) ─────────────────
     pred_details = pd.DataFrame({
         "Date":            future_dates,
         "Forecast Price":  predictions,
@@ -1061,99 +1081,89 @@ if selected_ticker == "GOOG":
         pred_details.at[0, "Forecast Price"] - current_price
     ) / current_price * 100
 
-    st.dataframe(
-        pred_details.style.format({
-            "Forecast Price": "${:.2f}",
-            "Lower Band ($)": "${:.2f}",
-            "Upper Band ($)": "${:.2f}",
-            "Change %":       "{:+.2f}%",
-        }).set_properties(**{
-            "background-color": "transparent",
-            "border-color":     "rgba(255,255,255,0.1)",
-        }),
-        hide_index=True,
-        use_container_width=True,
-        height=(pred_details.shape[0] + 1) * 35 + 3,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # --- Genuine out-of-sample model performance ---
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Model Performance — Last 60 Out-of-Sample Days")
-    st.markdown(
-        """
-        <p style="color:rgba(255,255,255,0.65);font-size:1rem;margin-bottom:1rem;">
-        The scaler was fitted on data ending 90 days ago, so these 60 evaluation
-        days were never seen during normalisation — this is a genuine out-of-sample
-        test, not an in-sample fit.  MAPE tells you the average percentage miss.
-        Directional accuracy above 55% is considered actionable; near 50% is a coin flip.
-        </p>
-        """,
-        unsafe_allow_html=True,
-    )
-
     with st.spinner("Running out-of-sample evaluation..."):
         perf = compute_model_performance(model, data, "GOOG", lookback_days, evaluation_days=60)
 
-    if perf:
-        p_col1, p_col2, p_col3, p_col4 = st.columns(4)
-        with p_col1:
-            metric_card("RMSE", f"${perf['rmse']:.2f}", delta="Root Mean Squared Error")
-        with p_col2:
-            metric_card("MAE",  f"${perf['mae']:.2f}",  delta="Mean Absolute Error")
-        with p_col3:
-            metric_card("MAPE", f"{perf['mape']:.2f}%", delta="Mean Absolute % Error")
-        with p_col4:
-            dir_color = "var(--accent-green)" if perf["directional_accuracy"] >= 55 else \
-                        "var(--accent-blue)"   if perf["directional_accuracy"] >= 50 else \
-                        "var(--accent-red)"
-            qualifier = "Actionable" if perf["directional_accuracy"] >= 55 else \
-                        "Marginal"   if perf["directional_accuracy"] >= 50 else \
-                        "Below chance"
-            metric_card(
-                "Directional Accuracy",
-                f"{perf['directional_accuracy']:.1f}%",
-                delta=f"<span style='color:{dir_color};'>{qualifier}</span>",
-            )
-
-        fig_perf = go.Figure()
-        fig_perf.add_trace(go.Scatter(
-            x=perf["df"]["Date"], y=perf["df"]["Actual Price"],
-            mode="lines", name="Actual",
-            line=dict(color="#58a6ff", width=2),
-        ))
-        fig_perf.add_trace(go.Scatter(
-            x=perf["df"]["Date"], y=perf["df"]["Predicted Price"],
-            mode="lines", name="Predicted",
-            line=dict(color="#ff7b72", width=2, dash="dot"),
-        ))
-        fig_perf.update_layout(
-            template="plotly_dark",
-            margin=dict(l=20, r=20, t=30, b=20),
-            xaxis_title="Date", yaxis_title="Price ($)",
-            hovermode="x unified",
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color="white"),
-            hoverlabel=dict(bgcolor="rgba(30,30,30,0.8)", font_size=14, font_family="Arial"),
-            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-            yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02,
-                xanchor="right", x=1,
-                bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)",
-            ),
-        )
-        st.plotly_chart(fig_perf, use_container_width=True)
-    else:
-        st.info("Not enough data to evaluate model performance with the current lookback window.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # --- Technical signal summary for GOOG ---
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Technical Signal Summary")
-    signal_rows = generate_signal_summary(close_series)
-    signal_df = pd.DataFrame(signal_rows, columns=["Indicator", "Signal", "Detail"])
-    st.dataframe(
+    st.subheader("Forecast & Model Performance")
+    tab_forecast, tab_perf, tab_signals = st.tabs([
+        "Forecast Table", "Model Performance", "Signal Summary"
+    ])
+
+    with tab_forecast:
+        st.dataframe(
+            pred_details.style.format({
+                "Forecast Price": "${:.2f}",
+                "Lower Band ($)": "${:.2f}",
+                "Upper Band ($)": "${:.2f}",
+                "Change %":       "{:+.2f}%",
+            }).set_properties(**{
+                "background-color": "transparent",
+                "border-color":     "rgba(255,255,255,0.1)",
+            }),
+            hide_index=True,
+            use_container_width=True,
+            height=(pred_details.shape[0] + 1) * 35 + 3,
+        )
+
+    with tab_perf:
+        st.markdown(
+            """
+            <p style="color:rgba(255,255,255,0.65);font-size:0.9rem;margin-bottom:1rem;">
+            Scaler fitted on data ending 90 days ago — the 60 evaluation days are genuinely
+            out-of-sample. Directional accuracy above 55% is actionable; near 50% is a coin flip.
+            </p>
+            """,
+            unsafe_allow_html=True,
+        )
+        if perf:
+            p_col1, p_col2, p_col3, p_col4 = st.columns(4)
+            with p_col1:
+                metric_card("RMSE", f"${perf['rmse']:.2f}", delta="Root Mean Squared Error")
+            with p_col2:
+                metric_card("MAE",  f"${perf['mae']:.2f}",  delta="Mean Absolute Error")
+            with p_col3:
+                metric_card("MAPE", f"{perf['mape']:.2f}%", delta="Mean Absolute % Error")
+            with p_col4:
+                dir_color = "var(--accent-green)" if perf["directional_accuracy"] >= 55 else \
+                            "var(--accent-blue)"   if perf["directional_accuracy"] >= 50 else \
+                            "var(--accent-red)"
+                qualifier = "Actionable" if perf["directional_accuracy"] >= 55 else \
+                            "Marginal"   if perf["directional_accuracy"] >= 50 else \
+                            "Below chance"
+                metric_card(
+                    "Directional Accuracy",
+                    f"{perf['directional_accuracy']:.1f}%",
+                    delta=f"<span style='color:{dir_color};'>{qualifier}</span>",
+                )
+            fig_perf = go.Figure()
+            fig_perf.add_trace(go.Scatter(
+                x=perf["df"]["Date"], y=perf["df"]["Actual Price"],
+                mode="lines", name="Actual", line=dict(color="#58a6ff", width=2),
+            ))
+            fig_perf.add_trace(go.Scatter(
+                x=perf["df"]["Date"], y=perf["df"]["Predicted Price"],
+                mode="lines", name="Predicted", line=dict(color="#ff7b72", width=2, dash="dot"),
+            ))
+            fig_perf.update_layout(
+                template="plotly_dark", margin=dict(l=20, r=20, t=30, b=20),
+                xaxis_title="Date", yaxis_title="Price ($)", hovermode="x unified",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="white"),
+                hoverlabel=dict(bgcolor="rgba(30,30,30,0.8)", font_size=14, font_family="Arial"),
+                xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+                yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                            bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)"),
+            )
+            st.plotly_chart(fig_perf, use_container_width=True)
+        else:
+            st.info("Not enough data to evaluate model performance with the current lookback window.")
+
+    with tab_signals:
+        signal_rows = generate_signal_summary(close_series)
+        signal_df   = pd.DataFrame(signal_rows, columns=["Indicator", "Signal", "Detail"])
+        st.dataframe(
             signal_df.style.set_properties(**{
                 "background-color": "transparent",
                 "border-color":     "rgba(255,255,255,0.1)",
@@ -1161,19 +1171,19 @@ if selected_ticker == "GOOG":
             hide_index=True,
             use_container_width=True,
             height=(signal_df.shape[0] + 1) * 45 + 3,
-    )
+        )
+
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- News with sentiment ---
+    # ── CARD 4: News with images + sentiment ──────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Latest Google News  —  Sentiment Analysis")
     st.markdown(
         f"""
         <p style="color:rgba(255,255,255,0.65);font-size:0.88rem;margin-bottom:1.25rem;">
-        Each headline is scored using keyword-based sentiment analysis.
+        Each headline is scored with keyword-based sentiment analysis.
         Overall news sentiment: <strong style="color:{sentiment_color};">{sentiment_label}
-        (score {sentiment_score:+.2f})</strong>.
-        Headlines refresh every 30 minutes.
+        (score {sentiment_score:+.2f})</strong>. Headlines and images refresh every 30 minutes.
         </p>
         """,
         unsafe_allow_html=True,
@@ -1182,15 +1192,26 @@ if selected_ticker == "GOOG":
     if news_items:
         cards_html = ""
         for article in news_items:
-            s_color = article["sentiment_color"]
-            s_label = article["sentiment"]
+            s_color   = article["sentiment_color"]
+            s_label   = article["sentiment"]
+            img_url   = article.get("image", "")
+            # Build the image section: real og:image if available, styled placeholder otherwise
+            if img_url:
+                img_html = f'<div class="news-img" style="background-image:url(\'{img_url}\');"></div>'
+            else:
+                # Gradient placeholder that still looks intentional
+                img_html = '<div class="news-img news-img-placeholder"></div>'
+
             cards_html += f"""
             <a href="{article['link']}" target="_blank" class="news-card">
-                <p class="news-card-title">{article['title']}</p>
-                <div class="news-card-footer">
-                    <span class="news-card-source">{article['source']}</span>
-                    <span class="news-sentiment" style="color:{s_color};">{s_label}</span>
-                    <span class="news-card-date">{article['published']}</span>
+                {img_html}
+                <div class="news-body">
+                    <p class="news-card-title">{article['title']}</p>
+                    <div class="news-card-footer">
+                        <span class="news-card-source">{article['source']}</span>
+                        <span class="news-sentiment" style="color:{s_color};">{s_label}</span>
+                        <span class="news-card-date">{article['published']}</span>
+                    </div>
                 </div>
             </a>
             """
@@ -1209,45 +1230,60 @@ if selected_ticker == "GOOG":
                 background: rgba(255,255,255,0.25); border-radius: 4px;
             }}
             .news-card {{
-                flex: 0 0 calc(20% - 0.8rem); min-width: 210px; max-width: 260px;
+                flex: 0 0 220px; width: 220px;
                 background: rgba(255,255,255,0.08); backdrop-filter: blur(16px);
                 -webkit-backdrop-filter: blur(16px);
                 border: 1px solid rgba(255,255,255,0.18); border-radius: 16px;
-                padding: 1.15rem 1.1rem 1rem 1.1rem; height: 200px;
-                display: flex; flex-direction: column; justify-content: space-between;
-                box-shadow: 0 4px 16px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+                overflow: hidden;
+                display: flex; flex-direction: column;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.35);
                 text-decoration: none;
-                transition: background 0.25s ease, transform 0.22s ease,
-                            border-top-color 0.25s ease, box-shadow 0.25s ease;
+                transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
             }}
             .news-card:hover {{
-                background: rgba(255,255,255,0.14); border-top-color: rgba(57,211,83,0.9);
-                transform: translateY(-4px);
-                box-shadow: 0 8px 28px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12);
+                transform: translateY(-5px);
+                box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+                border-color: rgba(57,211,83,0.6);
+            }}
+            .news-img {{
+                width: 100%; height: 120px; flex-shrink: 0;
+                background-size: cover; background-position: center;
+                background-repeat: no-repeat;
+            }}
+            .news-img-placeholder {{
+                background: linear-gradient(135deg,
+                    rgba(88,166,255,0.3) 0%,
+                    rgba(57,211,83,0.15) 50%,
+                    rgba(255,123,114,0.2) 100%);
+            }}
+            .news-body {{
+                padding: 0.85rem 0.9rem 0.8rem 0.9rem;
+                display: flex; flex-direction: column;
+                justify-content: space-between; flex: 1;
             }}
             .news-card-title {{
-                color: rgba(255,255,255,1); font-size:1rem; font-weight:600;
-                line-height:1.48; margin:0 0 0.6rem 0;
-                display:-webkit-box; -webkit-line-clamp:4;
-                -webkit-box-orient:vertical; overflow:hidden;
+                color: rgba(255,255,255,1); font-size: 0.82rem; font-weight: 600;
+                line-height: 1.45; margin: 0 0 0.5rem 0;
+                display: -webkit-box; -webkit-line-clamp: 3;
+                -webkit-box-orient: vertical; overflow: hidden;
             }}
             .news-card-footer {{
-                display:flex; flex-direction:column; gap:0.15rem;
+                display: flex; flex-direction: column; gap: 0.12rem;
             }}
             .news-card-source {{
-                color:rgba(88,166,255,1); font-size:0.72rem;
-                font-weight:700; letter-spacing:0.04em; text-transform:uppercase;
+                color: rgba(88,166,255,1); font-size: 0.68rem;
+                font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
             }}
             .news-sentiment {{
-                font-size:0.72rem; font-weight:700; letter-spacing:0.03em;
+                font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em;
             }}
             .news-card-date {{
-                color:rgba(255,255,255,0.35); font-size:0.68rem; text-align:right;
+                color: rgba(255,255,255,0.35); font-size: 0.62rem;
             }}
         </style>
         <div class="news-row">{cards_html}</div>
         """
-        components.html(full_html, height=240, scrolling=False)
+        components.html(full_html, height=310, scrolling=False)
     else:
         st.markdown(
             "<div style='color:rgba(255,255,255,0.5);font-size:0.88rem;padding:0.5rem 0;'>"
@@ -1256,7 +1292,7 @@ if selected_ticker == "GOOG":
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- Download ---
+    # ── Download ───────────────────────────────────────────────────────────────
     st.markdown('<div class="card" style="text-align:center;">', unsafe_allow_html=True)
     st.subheader("Download Report")
     st.markdown(
@@ -1327,7 +1363,7 @@ else:
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Price + MA chart
+    # ── CARD 1: Price + MA chart ──────────────────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader(f"{selected_ticker} Historical Price and Moving Averages")
     fig = go.Figure()
@@ -1365,178 +1401,161 @@ else:
     st.plotly_chart(fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Bollinger Bands
+    # ── CARD 2: Technical indicators (tabbed) ─────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader(f"{selected_ticker} Bollinger Bands (20-day, 2σ)")
-    fig_bb = go.Figure()
-    fig_bb.add_trace(go.Scatter(
-        x=data.index, y=bb_upper.values,
-        mode="lines", name="Upper Band",
-        line=dict(color="rgba(255,123,114,0.6)", width=1),
-    ))
-    fig_bb.add_trace(go.Scatter(
-        x=data.index, y=bb_lower.values,
-        mode="lines", name="Lower Band",
-        fill="tonexty", fillcolor="rgba(88,166,255,0.08)",
-        line=dict(color="rgba(88,166,255,0.6)", width=1),
-    ))
-    fig_bb.add_trace(go.Scatter(
-        x=data.index, y=bb_mid.values,
-        mode="lines", name="Middle Band (SMA 20)",
-        line=dict(color="#f0c040", width=1.5, dash="dot"),
-    ))
-    fig_bb.add_trace(go.Scatter(
-        x=data.index, y=close_prices,
-        mode="lines", name="Close",
-        line=dict(color="#58a6ff", width=2),
-    ))
-    fig_bb.update_layout(
-        template="plotly_dark",
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Date", yaxis_title="Price ($)",
-        hovermode="x unified",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02,
-            xanchor="right", x=1,
-            bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)",
-        ),
-    )
-    st.plotly_chart(fig_bb, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.subheader("Technical Analysis")
+    tab_bb, tab_rsi, tab_macd, tab_vol = st.tabs([
+        "Bollinger Bands", "RSI", "MACD", "Volume"
+    ])
 
-    # RSI
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader(f"{selected_ticker} RSI (14-day)")
-    fig_rsi = go.Figure()
-    fig_rsi.add_trace(go.Scatter(
-        x=data.index, y=rsi_series.values,
-        mode="lines", name="RSI",
-        line=dict(color="#58a6ff", width=2),
-    ))
-    fig_rsi.add_hline(y=70, line_dash="dash", line_color="#ff7b72",
-                      annotation_text="Overbought (70)", annotation_position="bottom right")
-    fig_rsi.add_hline(y=30, line_dash="dash", line_color="#39d353",
-                      annotation_text="Oversold (30)", annotation_position="top right")
-    fig_rsi.update_layout(
-        template="plotly_dark",
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Date", yaxis_title="RSI",
-        yaxis=dict(range=[0, 100], gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-    )
-    st.plotly_chart(fig_rsi, use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+    with tab_bb:
+        fig_bb = go.Figure()
+        fig_bb.add_trace(go.Scatter(
+            x=data.index, y=bb_upper.values,
+            mode="lines", name="Upper Band",
+            line=dict(color="rgba(255,123,114,0.6)", width=1),
+        ))
+        fig_bb.add_trace(go.Scatter(
+            x=data.index, y=bb_lower.values,
+            mode="lines", name="Lower Band",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.08)",
+            line=dict(color="rgba(88,166,255,0.6)", width=1),
+        ))
+        fig_bb.add_trace(go.Scatter(
+            x=data.index, y=bb_mid.values,
+            mode="lines", name="Middle Band (SMA 20)",
+            line=dict(color="#f0c040", width=1.5, dash="dot"),
+        ))
+        fig_bb.add_trace(go.Scatter(
+            x=data.index, y=close_prices,
+            mode="lines", name="Close",
+            line=dict(color="#58a6ff", width=2),
+        ))
+        fig_bb.update_layout(
+            template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Date", yaxis_title="Price ($)", hovermode="x unified",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)"),
+        )
+        st.plotly_chart(fig_bb, use_container_width=True)
 
-    # MACD
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader(f"{selected_ticker} MACD (12 / 26 / 9)")
+    with tab_rsi:
+        fig_rsi = go.Figure()
+        fig_rsi.add_trace(go.Scatter(
+            x=data.index, y=rsi_series.values,
+            mode="lines", name="RSI",
+            line=dict(color="#58a6ff", width=2),
+        ))
+        fig_rsi.add_hline(y=70, line_dash="dash", line_color="#ff7b72",
+                          annotation_text="Overbought (70)", annotation_position="bottom right")
+        fig_rsi.add_hline(y=30, line_dash="dash", line_color="#39d353",
+                          annotation_text="Oversold (30)", annotation_position="top right")
+        fig_rsi.update_layout(
+            template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Date", yaxis_title="RSI",
+            yaxis=dict(range=[0, 100], gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+        )
+        st.plotly_chart(fig_rsi, use_container_width=True)
+
     macd_line, signal_line, histogram = compute_macd(close_series)
-    fig_macd = go.Figure()
-    fig_macd.add_trace(go.Bar(
-        x=data.index, y=histogram.values,
-        name="Histogram",
-        marker_color=[
-            "rgba(57,211,83,0.6)" if v >= 0 else "rgba(255,123,114,0.6)"
-            for v in histogram.values
-        ],
-    ))
-    fig_macd.add_trace(go.Scatter(
-        x=data.index, y=macd_line.values,
-        mode="lines", name="MACD",
-        line=dict(color="#58a6ff", width=2),
-    ))
-    fig_macd.add_trace(go.Scatter(
-        x=data.index, y=signal_line.values,
-        mode="lines", name="Signal",
-        line=dict(color="#ff7b72", width=1.5, dash="dot"),
-    ))
-    fig_macd.update_layout(
-        template="plotly_dark",
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Date", yaxis_title="MACD",
-        hovermode="x unified",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02,
-            xanchor="right", x=1,
-            bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)",
-        ),
-    )
-    st.plotly_chart(fig_macd, use_container_width=True)
+    with tab_macd:
+        fig_macd = go.Figure()
+        fig_macd.add_trace(go.Bar(
+            x=data.index, y=histogram.values, name="Histogram",
+            marker_color=[
+                "rgba(57,211,83,0.6)" if v >= 0 else "rgba(255,123,114,0.6)"
+                for v in histogram.values
+            ],
+        ))
+        fig_macd.add_trace(go.Scatter(
+            x=data.index, y=macd_line.values,
+            mode="lines", name="MACD", line=dict(color="#58a6ff", width=2),
+        ))
+        fig_macd.add_trace(go.Scatter(
+            x=data.index, y=signal_line.values,
+            mode="lines", name="Signal", line=dict(color="#ff7b72", width=1.5, dash="dot"),
+        ))
+        fig_macd.update_layout(
+            template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Date", yaxis_title="MACD", hovermode="x unified",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                        bgcolor="rgba(0,0,0,0.3)", bordercolor="rgba(255,255,255,0.2)"),
+        )
+        st.plotly_chart(fig_macd, use_container_width=True)
+
+    with tab_vol:
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Bar(
+            x=data.index, y=volume_series,
+            name="Volume", marker_color="rgba(88,166,255,0.6)",
+        ))
+        fig_vol.update_layout(
+            template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20),
+            xaxis_title="Date", yaxis_title="Volume",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white"),
+            xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
+        )
+        st.plotly_chart(fig_vol, use_container_width=True)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Volume
+    # ── CARD 3: Signal summary + MA table (tabbed) ────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader(f"{selected_ticker} Trading Volume")
-    fig_vol = go.Figure()
-    fig_vol.add_trace(go.Bar(
-        x=data.index, y=volume_series,
-        name="Volume", marker_color="rgba(88,166,255,0.6)",
-    ))
-    fig_vol.update_layout(
-        template="plotly_dark",
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Date", yaxis_title="Volume",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.1)", linecolor="rgba(255,255,255,0.2)"),
-    )
-    st.plotly_chart(fig_vol, use_container_width=True)
+    st.subheader("Analysis Summary")
+    tab_signals, tab_ma = st.tabs(["Signal Summary", "Moving Averages"])
+
+    with tab_signals:
+        signal_rows = generate_signal_summary(close_series)
+        signal_df   = pd.DataFrame(signal_rows, columns=["Indicator", "Signal", "Detail"])
+        st.dataframe(
+            signal_df.style.set_properties(**{
+                "background-color": "transparent",
+                "border-color":     "rgba(255,255,255,0.1)",
+            }),
+            hide_index=True,
+            use_container_width=True,
+            height=(signal_df.shape[0] + 1) * 45 + 3,
+        )
+
+    with tab_ma:
+        ma_summary = pd.DataFrame({
+            "Date":       data.index[-10:],
+            "Close":      close_prices[-10:],
+            "20-Day MA":  ma20.values[-10:],
+            "50-Day MA":  ma50.values[-10:],
+            "RSI":        rsi_series.values[-10:],
+        })
+        st.dataframe(
+            ma_summary.style.format({
+                "Close":     "${:.2f}",
+                "20-Day MA": "${:.2f}",
+                "50-Day MA": "${:.2f}",
+                "RSI":       "{:.1f}",
+            }).set_properties(**{
+                "background-color": "transparent",
+                "border-color":     "rgba(255,255,255,0.1)",
+            }),
+            hide_index=True,
+            use_container_width=True,
+            height=(ma_summary.shape[0] + 1) * 35 + 3,
+        )
+
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Technical signal summary table
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Technical Signal Summary")
-    signal_rows = generate_signal_summary(close_series)
-    signal_df   = pd.DataFrame(signal_rows, columns=["Indicator", "Signal", "Detail"])
-    st.dataframe(
-        signal_df.set_properties(**{
-            "background-color": "transparent",
-            "border-color":     "rgba(255,255,255,0.1)",
-        }),
-        hide_index=True,
-        use_container_width=True,
-        height=(signal_df.shape[0] + 1) * 45 + 3,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Moving average summary (kept from original, now supplementary)
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Moving Average Summary (Last 10 Days)")
-    ma_summary = pd.DataFrame({
-        "Date":       data.index[-10:],
-        "Close":      close_prices[-10:],
-        "20-Day MA":  ma20.values[-10:],
-        "50-Day MA":  ma50.values[-10:],
-        "RSI":        rsi_series.values[-10:],
-    })
-    st.dataframe(
-        ma_summary.style.format({
-            "Close":     "${:.2f}",
-            "20-Day MA": "${:.2f}",
-            "50-Day MA": "${:.2f}",
-            "RSI":       "{:.1f}",
-        }).set_properties(**{
-            "background-color": "transparent",
-            "border-color":     "rgba(255,255,255,0.1)",
-        }),
-        hide_index=True,
-        use_container_width=True,
-        height=(ma_summary.shape[0] + 1) * 35 + 3,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Download
+    # ── Download ───────────────────────────────────────────────────────────────
     st.markdown('<div class="card" style="text-align:center;">', unsafe_allow_html=True)
     st.subheader("Download Report")
     st.markdown(
