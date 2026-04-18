@@ -1154,13 +1154,13 @@ if selected_ticker == "GOOG":
     signal_rows = generate_signal_summary(close_series)
     signal_df = pd.DataFrame(signal_rows, columns=["Indicator", "Signal", "Detail"])
     st.dataframe(
-        signal_df.set_properties(**{
-            "background-color": "transparent",
-            "border-color":     "rgba(255,255,255,0.1)",
-        }),
-        hide_index=True,
-        use_container_width=True,
-        height=(signal_df.shape[0] + 1) * 45 + 3,
+            signal_df.style.set_properties(**{
+                "background-color": "transparent",
+                "border-color":     "rgba(255,255,255,0.1)",
+            }),
+            hide_index=True,
+            use_container_width=True,
+            height=(signal_df.shape[0] + 1) * 45 + 3,
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
