@@ -1276,7 +1276,7 @@ else:
     st.markdown(
         f"""
         <div class="info-banner">
-            You are viewing <strong>{selected_ticker} — {company_name}</strong>.
+            You are viewing <strong>{selected_ticker} - {company_name}</strong>.
             Price predictions are only available for GOOG.
             Full technical analysis is shown below.
         </div>
@@ -1507,15 +1507,12 @@ else:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 # 9.  DISCLAIMER
 st.markdown(
     """
 <div class="card" style="text-align:center;margin-top:2rem;">
   <p style="color:var(--text-muted);margin:0;font-size:clamp(0.75rem, 1.5vw, 0.875rem);">
-    Disclaimer: Stock price forecasts are based on historical data and machine-learning models.
-    Past performance is not indicative of future results.
-    This tool is for informational purposes only and should not be considered financial advice.
+    Disclaimer: Forecasts are generated from historical price data and an LSTM model. They do not account for market events, earnings surprises, or macroeconomic shifts. Past performance does not predict future results. This tool does not constitute financial advice. Consult a licensed financial advisor before making investment decisions.
   </p>
 </div>
 """,
