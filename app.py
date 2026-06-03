@@ -615,7 +615,7 @@ def _fetch_og_image(url: str, timeout: int = 4) -> str:
 
 
 @st.cache_data(ttl=1800)
-def fetch_google_news(max_items=5):
+def fetch_google_news(max_items=6):
     try:
         url = "https://news.google.com/rss/search?q=Google+Alphabet+stock&hl=en-US&gl=US&ceid=US:en"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -736,7 +736,7 @@ if selected_ticker == "GOOG":
     change_pct  = (next_price - current_price) / current_price * 100
     delta_color = "var(--accent-green)" if change_pct >= 0 else "var(--accent-red)"
 
-    news_items       = fetch_google_news(max_items=5)
+    news_items       = fetch_google_news(max_items=6)
     sentiment_label, sentiment_score = aggregate_sentiment(news_items)
     sentiment_color  = (
         "var(--accent-green)" if sentiment_label == "Positive"
@@ -1119,7 +1119,7 @@ if selected_ticker == "GOOG":
                 flex-direction: row;
                 gap: 1rem;
                 overflow-x: auto;
-                padding: 0.25rem 0.5rem 1rem 0.5rem;
+                padding: 0.25rem 0.1rem 1rem 0.1rem;
                 scrollbar-width: thin;
                 scrollbar-color: rgba(255,255,255,0.15) transparent;
             }}
@@ -1233,7 +1233,7 @@ if selected_ticker == "GOOG":
 
             /* Date  left side, small and muted */
             .nc-date {{
-                color: rgba(0,0,0,0.55);
+                color: rgba(0,0,0,0.38);
                 font-size: 0.60rem;
                 white-space: nowrap;
                 overflow: hidden;
@@ -1256,19 +1256,10 @@ if selected_ticker == "GOOG":
                 letter-spacing: 0.02em;
                 text-align: right;
             }}
-
-            .nc-wrapper {{
-                    width: 100%;
-                    overflow: hidden;
-                    padding: 0 0.25rem;
-                    box-sizing: border-box;
-                }}
         </style>
-        <div class="nc-wrapper">
-            <div class="nc-row">{cards_html}</div>
-        </div>
+        <div class="nc-row">{cards_html}</div>
         """
-        components.html(full_html, height=340, scrolling=False)
+        components.html(full_html, height=330, scrolling=False)
     else:
         st.markdown(
             "<div style='color:rgba(255,255,255,0.5);font-size:0.88rem;padding:0.5rem 0;'>"
