@@ -1233,7 +1233,7 @@ if selected_ticker == "GOOG":
 
             /* Date  left side, small and muted */
             .nc-date {{
-                color: rgba(0,0,0,0.38);
+                color: #808080;
                 font-size: 0.60rem;
                 white-space: nowrap;
                 overflow: hidden;
