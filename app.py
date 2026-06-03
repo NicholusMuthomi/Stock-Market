@@ -14,9 +14,7 @@ from sklearn.linear_model import LinearRegression
 from tensorflow.keras.models import load_model
 import plotly.graph_objects as go
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1.  GLOBAL STYLING  (unchanged from original)
-# ─────────────────────────────────────────────────────────────────────────────
+# 1.  GLOBAL STYLING
 st.set_page_config(page_title="Stock Market Dashboard", layout="wide")
 
 st.markdown(
@@ -169,9 +167,9 @@ tbody tr:nth-child(even) {background-color: var(--bg-secondary);}
     unsafe_allow_html=True,
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 2.  RE-USABLE COMPONENTS
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 def metric_card(label, value, delta=None):
     delta_html = f"<span class='metric-delta'>{delta}</span>" if delta else ""
@@ -186,9 +184,8 @@ def metric_card(label, value, delta=None):
         unsafe_allow_html=True,
     )
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # 3.  TICKER CONFIGURATION
-# ─────────────────────────────────────────────────────────────────────────────
 
 TICKERS = {
     "GOOG": "Alphabet Inc. (Google)",
@@ -198,9 +195,7 @@ TICKERS = {
     "TSLA": "Tesla Inc.",
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 4.  LOAD ML ARTEFACTS (GOOG only)
-# ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_resource
 def load_ml_components():
@@ -211,26 +206,15 @@ def load_ml_components():
         st.error(f"Error loading model: {e}")
         st.stop()
 
-
 @st.cache_resource
 def get_training_scaler():
-    """
-    Load the scaler from disk when available (preferred).
-
-    Fallback — build it from scratch:
-      Download 5 years of GOOG history and fit the scaler only on the portion
-      that ends 90 days before today, so the hold-out window stays unseen.
-      Using a fixed 5-year look-back avoids the date-arithmetic bug that
-      produced an empty DataFrame (and the resulting MinMaxScaler crash) when
-      subtracting 20 years from an already-shifted end date.
-    """
     scaler_path = "google_stock_scaler.joblib"
     if os.path.exists(scaler_path):
         return joblib.load(scaler_path)
 
     try:
         end_full   = datetime.now()
-        start_full = end_full - timedelta(days=365 * 5)   # 5 years is plenty
+        start_full = end_full - timedelta(days=365 * 5)
 
         raw = yf.download("GOOG", start=start_full, end=end_full, progress=False)
         raw = raw.dropna()
@@ -239,7 +223,6 @@ def get_training_scaler():
             st.error("Could not download GOOG data to build the scaler.")
             st.stop()
 
-        # Extract close prices
         if ("Close", "GOOG") in raw.columns:
             close_col = raw[("Close", "GOOG")]
         elif "Close" in raw.columns:
@@ -248,13 +231,11 @@ def get_training_scaler():
             st.error("Unexpected column structure from yfinance.")
             st.stop()
 
-        # Fit only on the training slice (everything before the 90-day hold-out)
         cutoff     = end_full - timedelta(days=90)
         train_mask = raw.index <= cutoff
         train_prices = close_col[train_mask].values.reshape(-1, 1)
 
         if len(train_prices) < 2:
-            # Edge case: if somehow the mask is empty, fit on all data
             train_prices = close_col.values.reshape(-1, 1)
 
         scaler = MinMaxScaler(feature_range=(0, 1))
@@ -265,7 +246,6 @@ def get_training_scaler():
         st.error(f"Error building scaler: {e}")
         st.stop()
 
-
 model  = load_ml_components()
 scaler = get_training_scaler()
 
@@ -273,10 +253,7 @@ if model is None or scaler is None:
     st.error("Critical components (model or scaler) could not be loaded.")
     st.stop()
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 5.  HEADER
-# ─────────────────────────────────────────────────────────────────────────────
-
 st.markdown(
     """
 <div class="card" style="text-align:center;">
@@ -290,10 +267,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 6.  SIDEBAR
-# ─────────────────────────────────────────────────────────────────────────────
-
 st.sidebar.header("Settings")
 
 selected_ticker = st.sidebar.selectbox(
@@ -330,9 +304,7 @@ else:
         unsafe_allow_html=True,
     )
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 7.  DATA PIPELINE
-# ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data
 def get_stock_data(ticker):
@@ -379,27 +351,8 @@ def prepare_data(data, ticker, lookback_window):
         st.stop()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 7a.  IMPROVED PREDICTION  –  LSTM + linear-trend blend
-#
-#  The raw LSTM on price levels tends to lag because it minimises MSE by
-#  predicting something close to yesterday's price.  We correct for this by:
-#   1. Running the LSTM autoregressively to get a raw price path.
-#   2. Fitting a short-term linear trend on the last 20 actual prices and
-#      projecting it forward.
-#   3. Blending the two (60 % LSTM, 40 % trend) so the forecast is anchored
-#      to real momentum rather than purely echoing recent levels.
-#   4. Building the confidence band from actual model residuals over the last
-#      60 out-of-sample days, not from a generic volatility formula.
-# ─────────────────────────────────────────────────────────────────────────────
-
 def make_predictions(model, last_sequence, days_to_predict):
-    """
-    Autoregressive LSTM prediction blended with a linear momentum trend.
-    Returns the blended forecast as a 1-D numpy array.
-    """
     try:
-        # --- LSTM autoregressive rollout ---
         lstm_preds_scaled = []
         current_seq = last_sequence.copy()
         for _ in range(days_to_predict):
@@ -412,8 +365,6 @@ def make_predictions(model, last_sequence, days_to_predict):
             np.array(lstm_preds_scaled).reshape(-1, 1)
         ).flatten()
 
-        # --- Linear momentum trend over the last 20 actual closing prices ---
-        # last_sequence is in scaled space; invert to get actual prices
         recent_prices = scaler.inverse_transform(
             last_sequence[-20:].reshape(-1, 1)
         ).flatten()
@@ -425,7 +376,6 @@ def make_predictions(model, last_sequence, days_to_predict):
         ).reshape(-1, 1)
         trend_prices = lr.predict(x_future)
 
-        # --- Blend: 60 % LSTM, 40 % linear trend ---
         blended = 0.60 * lstm_prices + 0.40 * trend_prices
         return blended
 
@@ -435,14 +385,6 @@ def make_predictions(model, last_sequence, days_to_predict):
 
 
 def compute_residual_confidence_band(model, data, ticker, lookback_window, eval_days=60):
-    """
-    Walk-forward evaluation on the last `eval_days` of data that the scaler
-    has NOT seen (because the scaler was fitted on data ending 90 days ago).
-
-    Returns per-step mean absolute error indexed by step offset (1, 2, … n).
-    This is used to build a confidence band whose width is grounded in actual
-    measured model error, not a theoretical volatility formula.
-    """
     try:
         close_series   = extract_close(data, ticker)
         close_prices   = close_series.values.reshape(-1, 1)
@@ -452,7 +394,7 @@ def compute_residual_confidence_band(model, data, ticker, lookback_window, eval_
             return None
 
         eval_start = len(scaled_all) - eval_days
-        errors     = []   # list of (step_offset, abs_error)
+        errors     = []
 
         for i in range(eval_start, len(scaled_all)):
             seq        = scaled_all[i - lookback_window:i]
@@ -462,7 +404,6 @@ def compute_residual_confidence_band(model, data, ticker, lookback_window, eval_
             errors.append(abs(p_price - actual))
 
         mae_per_step = np.array(errors)
-        # Compound uncertainty: band at step k = mae * sqrt(k)
         return mae_per_step.mean()
 
     except Exception:
@@ -470,11 +411,6 @@ def compute_residual_confidence_band(model, data, ticker, lookback_window, eval_
 
 
 def build_confidence_band(predictions, base_mae):
-    """
-    Confidence band whose width at step k is  base_mae * sqrt(k).
-    This correctly reflects that uncertainty grows with forecast horizon,
-    and the base width is anchored to real out-of-sample prediction error.
-    """
     upper, lower = [], []
     for k, price in enumerate(predictions, start=1):
         band = base_mae * np.sqrt(k)
@@ -482,16 +418,6 @@ def build_confidence_band(predictions, base_mae):
         lower.append(price - band)
     return np.array(upper), np.array(lower)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7b.  GENUINE OUT-OF-SAMPLE MODEL PERFORMANCE
-#
-#  The evaluation window is the last 60 trading days.  Because the scaler was
-#  fitted only on data BEFORE the last 90 days, these 60 days are truly
-#  out-of-sample: the model has never indirectly seen their price levels via
-#  normalisation.  Directional accuracy is also computed correctly here using
-#  walk-forward one-step-ahead predictions rather than in-sample fits.
-# ─────────────────────────────────────────────────────────────────────────────
 
 def compute_model_performance(model, data, ticker, lookback_window, evaluation_days=60):
     try:
@@ -520,7 +446,6 @@ def compute_model_performance(model, data, ticker, lookback_window, evaluation_d
         mae  = np.mean(np.abs(actuals - predicted))
         mape = np.mean(np.abs((actuals - predicted) / actuals)) * 100
 
-        # Directional accuracy: does the model correctly call up vs. down?
         actual_dir    = np.sign(np.diff(actuals))
         predicted_dir = np.sign(np.diff(predicted))
         dir_acc       = np.mean(actual_dir == predicted_dir) * 100
@@ -545,11 +470,6 @@ def compute_model_performance(model, data, ticker, lookback_window, evaluation_d
         st.warning(f"Could not compute model performance: {e}")
         return None
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7c.  TECHNICAL INDICATORS  (used for all tickers, not just GOOG)
-# ─────────────────────────────────────────────────────────────────────────────
-
 def compute_moving_averages(close_series):
     ma20 = close_series.rolling(window=20).mean()
     ma50 = close_series.rolling(window=50).mean()
@@ -557,7 +477,6 @@ def compute_moving_averages(close_series):
 
 
 def compute_rsi(close_series, period=14):
-    """Relative Strength Index (0–100).  >70 = overbought, <30 = oversold."""
     delta  = close_series.diff()
     gain   = delta.clip(lower=0).rolling(window=period).mean()
     loss   = (-delta.clip(upper=0)).rolling(window=period).mean()
@@ -566,7 +485,6 @@ def compute_rsi(close_series, period=14):
 
 
 def compute_macd(close_series, fast=12, slow=26, signal=9):
-    """MACD line, signal line, and histogram."""
     ema_fast   = close_series.ewm(span=fast,   adjust=False).mean()
     ema_slow   = close_series.ewm(span=slow,   adjust=False).mean()
     macd_line  = ema_fast - ema_slow
@@ -576,7 +494,6 @@ def compute_macd(close_series, fast=12, slow=26, signal=9):
 
 
 def compute_bollinger_bands(close_series, window=20, num_std=2):
-    """Upper, middle (SMA), and lower Bollinger Bands."""
     sma   = close_series.rolling(window=window).mean()
     std   = close_series.rolling(window=window).std()
     upper = sma + num_std * std
@@ -585,11 +502,6 @@ def compute_bollinger_bands(close_series, window=20, num_std=2):
 
 
 def generate_signal_summary(close_series):
-    """
-    Produce a plain-language technical signal summary based on RSI, MACD,
-    and Bollinger Band position.  Returns a list of (indicator, signal, detail)
-    tuples so the UI can render them in a table.
-    """
     rsi                         = compute_rsi(close_series)
     macd_line, signal_line, _   = compute_macd(close_series)
     bb_upper, bb_mid, bb_lower  = compute_bollinger_bands(close_series)
@@ -606,15 +518,13 @@ def generate_signal_summary(close_series):
 
     rows = []
 
-    # RSI
     if current_rsi > 70:
-        rows.append(("RSI", "Overbought", f"{current_rsi:.1f} — price may be due for a pullback"))
+        rows.append(("RSI", "Overbought", f"{current_rsi:.1f}, price may be due for a pullback"))
     elif current_rsi < 30:
-        rows.append(("RSI", "Oversold",   f"{current_rsi:.1f} — price may be due for a bounce"))
+        rows.append(("RSI", "Oversold",   f"{current_rsi:.1f},price may be due for a bounce"))
     else:
-        rows.append(("RSI", "Neutral",    f"{current_rsi:.1f} — no extreme reading"))
+        rows.append(("RSI", "Neutral",    f"{current_rsi:.1f},no extreme reading"))
 
-    # MACD crossover
     prev_macd = macd_line.iloc[-2]
     prev_sig  = signal_line.iloc[-2]
     if prev_macd < prev_sig and current_macd > current_sig:
@@ -626,7 +536,6 @@ def generate_signal_summary(close_series):
     else:
         rows.append(("MACD", "Bearish",  "MACD below signal — downward momentum"))
 
-    # Bollinger Bands
     if current_price > current_bb_u:
         rows.append(("Bollinger Bands", "Above upper band", f"Price ${current_price:.2f} above upper band ${current_bb_u:.2f} — extended"))
     elif current_price < current_bb_l:
@@ -635,7 +544,6 @@ def generate_signal_summary(close_series):
         pct_b = (current_price - current_bb_l) / (current_bb_u - current_bb_l) * 100
         rows.append(("Bollinger Bands", "Within bands", f"Price at {pct_b:.0f}% of band range"))
 
-    # MA crossover (golden/death cross)
     prev_ma20 = ma20.iloc[-2]
     prev_ma50 = ma50.iloc[-2]
     if prev_ma20 < prev_ma50 and current_ma20 > current_ma50:
@@ -649,15 +557,6 @@ def generate_signal_summary(close_series):
 
     return rows
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7d.  NEWS + SENTIMENT
-#
-#  The original app fetched headlines but displayed them as pure decoration.
-#  This version adds a lightweight keyword-based sentiment classifier so each
-#  headline is labelled Positive / Negative / Neutral, and an aggregate
-#  sentiment score is displayed alongside the LSTM prediction to give context.
-# ─────────────────────────────────────────────────────────────────────────────
 
 POSITIVE_KEYWORDS = [
     "surge", "soar", "rally", "beat", "record", "profit", "gain", "growth",
@@ -674,11 +573,6 @@ NEGATIVE_KEYWORDS = [
 
 
 def score_sentiment(title: str) -> tuple[str, str]:
-    """
-    Return (label, colour_variable) for a headline.
-    Scoring: +1 per positive keyword hit, -1 per negative keyword hit.
-    Ties go to Neutral.
-    """
     text  = title.lower()
     score = sum(1 for w in POSITIVE_KEYWORDS if w in text) \
           - sum(1 for w in NEGATIVE_KEYWORDS if w in text)
@@ -690,11 +584,6 @@ def score_sentiment(title: str) -> tuple[str, str]:
 
 
 def _fetch_og_image(url: str, timeout: int = 4) -> str:
-    """
-    Try to pull the og:image meta tag from an article URL.
-    Returns the image URL string, or "" on any failure.
-    Google News redirects to the real article; we follow up to 3 redirects.
-    """
     if not url or url == "#":
         return ""
     try:
@@ -709,11 +598,8 @@ def _fetch_og_image(url: str, timeout: int = 4) -> str:
             },
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            # Read only the first 12 KB — enough to find <head> og:image
             chunk = resp.read(12288).decode("utf-8", errors="ignore")
 
-        # Look for  <meta property="og:image" content="...">
-        # or        <meta content="..." property="og:image">
         for pattern in (
             r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
             r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
@@ -768,6 +654,14 @@ def fetch_google_news(max_items=5):
             sentiment_label, sentiment_color = score_sentiment(title)
             image_url = _fetch_og_image(link)
 
+            # Build favicon URL from the article link domain
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(link).netloc
+                favicon_url = f"https://www.google.com/s2/favicons?domain={domain}&sz=32"
+            except Exception:
+                favicon_url = ""
+
             news.append({
                 "title":           title,
                 "link":            link,
@@ -776,6 +670,7 @@ def fetch_google_news(max_items=5):
                 "sentiment":       sentiment_label,
                 "sentiment_color": sentiment_color,
                 "image":           image_url,
+                "favicon":         favicon_url,
             })
 
         return news
@@ -785,10 +680,6 @@ def fetch_google_news(max_items=5):
 
 
 def aggregate_sentiment(news_items):
-    """
-    Return an overall sentiment label and score for a list of news items.
-    Score = (positive_count - negative_count) / total, in [-1, 1].
-    """
     if not news_items:
         return "Neutral", 0.0
     counts = {"Positive": 0, "Negative": 0, "Neutral": 0}
@@ -806,10 +697,7 @@ def aggregate_sentiment(news_items):
 def generate_csv(df):
     return df.to_csv(index=False).encode("utf-8")
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # 8.  MAIN DASHBOARD
-# ─────────────────────────────────────────────────────────────────────────────
 
 data = get_stock_data(selected_ticker)
 
@@ -823,22 +711,21 @@ volume_series = extract_volume(data, selected_ticker)
 ma20, ma50    = compute_moving_averages(close_series)
 current_price = float(close_prices[-1])
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 8a.  GOOG  –  FULL PREDICTION + ANALYTICS MODE
-# ─────────────────────────────────────────────────────────────────────────────
+
+# 8a.  GOOG  --  FULL PREDICTION + ANALYTICS MODE
+
 
 if selected_ticker == "GOOG":
 
     x_data, _   = prepare_data(data, selected_ticker, lookback_days)
     predictions = make_predictions(model, x_data[-1], prediction_days)
 
-    # Build confidence band from real model residuals
     with st.spinner("Computing residual-based confidence band..."):
         base_mae = compute_residual_confidence_band(
             model, data, "GOOG", lookback_days, eval_days=60
         )
     if base_mae is None:
-        base_mae = current_price * 0.01   # fallback: 1 % of price
+        base_mae = current_price * 0.01
 
     upper_band, lower_band = build_confidence_band(predictions, base_mae)
 
@@ -849,7 +736,6 @@ if selected_ticker == "GOOG":
     change_pct  = (next_price - current_price) / current_price * 100
     delta_color = "var(--accent-green)" if change_pct >= 0 else "var(--accent-red)"
 
-    # Fetch news early so sentiment can inform the metric bar
     news_items       = fetch_google_news(max_items=5)
     sentiment_label, sentiment_score = aggregate_sentiment(news_items)
     sentiment_color  = (
@@ -858,7 +744,6 @@ if selected_ticker == "GOOG":
         else "var(--accent-blue)"
     )
 
-    # --- Metrics row (now includes news sentiment) ---
     st.markdown('<div class="metric-container">', unsafe_allow_html=True)
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -875,11 +760,10 @@ if selected_ticker == "GOOG":
         metric_card(
             "News Sentiment",
             sentiment_label,
-            delta=f"<span style='color:{sentiment_color};'>Score: {sentiment_score:+.2f} of ±1.0</span>",
+            delta=f"<span style='color:{sentiment_color};'>Score: {sentiment_score:+.2f} of +/-1.0</span>",
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── CARD 1: Price chart with predictions ─────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Price Chart with Predictions")
 
@@ -955,7 +839,6 @@ if selected_ticker == "GOOG":
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── CARD 2: Technical charts (tabbed) ────────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Technical Analysis")
     tab_bb, tab_rsi, tab_macd, tab_vol = st.tabs([
@@ -1068,7 +951,6 @@ if selected_ticker == "GOOG":
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── CARD 3: Forecast details + Model performance (tabbed) ─────────────────
     pred_details = pd.DataFrame({
         "Date":            future_dates,
         "Forecast Price":  predictions,
@@ -1175,9 +1057,9 @@ if selected_ticker == "GOOG":
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── CARD 4: News with images + sentiment ──────────────────────────────────
+    # CARD 4: Latest Google News — redesigned cards
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Latest Google News  —  Sentiment Analysis")
+    st.subheader("Latest Google News")
     st.markdown(
         f"""
         <p style="color:rgba(255,255,255,0.65);font-size:0.88rem;margin-bottom:1.25rem;">
@@ -1192,25 +1074,36 @@ if selected_ticker == "GOOG":
     if news_items:
         cards_html = ""
         for article in news_items:
-            s_color   = article["sentiment_color"]
-            s_label   = article["sentiment"]
-            img_url   = article.get("image", "")
-            # Build the image section: real og:image if available, styled placeholder otherwise
+            s_color  = article["sentiment_color"]
+            s_label  = article["sentiment"]
+            img_url  = article.get("image", "")
+            favicon  = article.get("favicon", "")
+
             if img_url:
-                img_html = f'<div class="news-img" style="background-image:url(\'{img_url}\');"></div>'
+                img_html = f'<div class="nc-img" style="background-image:url(\'{img_url}\');"></div>'
             else:
-                # Gradient placeholder that still looks intentional
-                img_html = '<div class="news-img news-img-placeholder"></div>'
+                img_html = '<div class="nc-img nc-img-placeholder"></div>'
+
+            favicon_html = (
+                f'<img class="nc-favicon" src="{favicon}" alt="" />'
+                if favicon else
+                '<div class="nc-favicon-fallback"></div>'
+            )
 
             cards_html += f"""
-            <a href="{article['link']}" target="_blank" class="news-card">
+            <a href="{article['link']}" target="_blank" class="nc">
                 {img_html}
-                <div class="news-body">
-                    <p class="news-card-title">{article['title']}</p>
-                    <div class="news-card-footer">
-                        <span class="news-card-source">{article['source']}</span>
-                        <span class="news-sentiment" style="color:{s_color};">{s_label}</span>
-                        <span class="news-card-date">{article['published']}</span>
+                <div class="nc-body">
+                    <p class="nc-title">{article['title']}</p>
+                    <div class="nc-footer">
+                        <div class="nc-footer-left">
+                            {favicon_html}
+                            <span class="nc-date">{article['published']}</span>
+                        </div>
+                        <div class="nc-footer-right">
+                            <span class="nc-source">{article['source']}</span>
+                            <span class="nc-sentiment" style="color:{s_color};">{s_label}</span>
+                        </div>
                     </div>
                 </div>
             </a>
@@ -1218,72 +1111,155 @@ if selected_ticker == "GOOG":
 
         full_html = f"""
         <style>
-            body {{ margin: 0; padding: 0; background: transparent; }}
-            .news-row {{
-                display: flex; flex-direction: row; gap: 1rem;
-                overflow-x: auto; padding-bottom: 0.85rem;
-                scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.2) transparent;
+            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+            body {{ background: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }}
+
+            .nc-row {{
+                display: flex;
+                flex-direction: row;
+                gap: 1rem;
+                overflow-x: auto;
+                padding: 0.25rem 0.1rem 1rem 0.1rem;
+                scrollbar-width: thin;
+                scrollbar-color: rgba(255,255,255,0.15) transparent;
             }}
-            .news-row::-webkit-scrollbar {{ height: 5px; }}
-            .news-row::-webkit-scrollbar-track {{ background: transparent; }}
-            .news-row::-webkit-scrollbar-thumb {{
-                background: rgba(255,255,255,0.25); border-radius: 4px;
+            .nc-row::-webkit-scrollbar {{ height: 4px; }}
+            .nc-row::-webkit-scrollbar-track {{ background: transparent; }}
+            .nc-row::-webkit-scrollbar-thumb {{
+                background: rgba(255,255,255,0.2);
+                border-radius: 4px;
             }}
-            .news-card {{
-                flex: 0 0 220px; width: 220px;
-                background: rgba(255,255,255,0.08); backdrop-filter: blur(16px);
-                -webkit-backdrop-filter: blur(16px);
-                border: 1px solid rgba(255,255,255,0.18); border-radius: 16px;
+
+            /* Card shell */
+            .nc {{
+                flex: 0 0 250px;
+                width: 250px;
+                background: rgba(255,255,255,0.07);
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                border: 1px solid rgba(255,255,255,0.14);
+                border-radius: 18px;
                 overflow: hidden;
-                display: flex; flex-direction: column;
-                box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+                display: flex;
+                flex-direction: column;
                 text-decoration: none;
-                transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+                box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+                transition: box-shadow 0.25s ease, border-color 0.25s ease;
             }}
-            .news-card:hover {{
-                transform: translateY(-5px);
-                box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-                border-color: rgba(57,211,83,0.6);
+            .nc:hover {{
+                box-shadow:
+                    0 0 0 1px rgba(255,255,255,0.22),
+                    0 4px 24px rgba(255,255,255,0.06),
+                    inset 0 1px 0 rgba(255,255,255,0.12);
+                border-color: rgba(255,255,255,0.28);
             }}
-            .news-img {{
-                width: 100%; height: 120px; flex-shrink: 0;
-                background-size: cover; background-position: center;
+
+            /* Image area */
+            .nc-img {{
+                width: 100%;
+                height: 130px;
+                flex-shrink: 0;
+                background-size: cover;
+                background-position: center;
                 background-repeat: no-repeat;
             }}
-            .news-img-placeholder {{
+            .nc-img-placeholder {{
                 background: linear-gradient(135deg,
-                    rgba(88,166,255,0.3) 0%,
-                    rgba(57,211,83,0.15) 50%,
-                    rgba(255,123,114,0.2) 100%);
+                    rgba(88,166,255,0.22) 0%,
+                    rgba(57,211,83,0.10) 50%,
+                    rgba(255,123,114,0.16) 100%);
             }}
-            .news-body {{
-                padding: 0.85rem 0.9rem 0.8rem 0.9rem;
-                display: flex; flex-direction: column;
-                justify-content: space-between; flex: 1;
+
+            /* Body — white/light background like img1 */
+            .nc-body {{
+                padding: 0.75rem 0.85rem 0.7rem 0.85rem;
+                background: rgba(255,255,255,0.92);
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+                border-radius: 0 0 17px 17px;
             }}
-            .news-card-title {{
-                color: rgba(255,255,255,1); font-size: 0.82rem; font-weight: 600;
-                line-height: 1.45; margin: 0 0 0.5rem 0;
-                display: -webkit-box; -webkit-line-clamp: 3;
-                -webkit-box-orient: vertical; overflow: hidden;
+
+            /* Title */
+            .nc-title {{
+                color: #111;
+                font-size: 0.80rem;
+                font-weight: 600;
+                line-height: 1.45;
+                margin-bottom: 0.55rem;
+                display: -webkit-box;
+                -webkit-line-clamp: 3;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
             }}
-            .news-card-footer {{
-                display: flex; flex-direction: column; gap: 0.12rem;
+
+            /* Footer row */
+            .nc-footer {{
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-end;
+                gap: 0.4rem;
             }}
-            .news-card-source {{
-                color: rgba(88,166,255,1); font-size: 0.68rem;
-                font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+            .nc-footer-left {{
+                display: flex;
+                align-items: center;
+                gap: 0.3rem;
+                min-width: 0;
             }}
-            .news-sentiment {{
-                font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em;
+            .nc-footer-right {{
+                display: flex;
+                flex-direction: column;
+                align-items: flex-end;
+                gap: 0.1rem;
+                flex-shrink: 0;
             }}
-            .news-card-date {{
-                color: rgba(255,255,255,0.35); font-size: 0.62rem;
+
+            /* Favicon */
+            .nc-favicon {{
+                width: 14px;
+                height: 14px;
+                border-radius: 3px;
+                object-fit: contain;
+                flex-shrink: 0;
+            }}
+            .nc-favicon-fallback {{
+                width: 14px;
+                height: 14px;
+                border-radius: 3px;
+                background: rgba(0,0,0,0.12);
+                flex-shrink: 0;
+            }}
+
+            /* Date — left side, small and muted */
+            .nc-date {{
+                color: rgba(0,0,0,0.38);
+                font-size: 0.60rem;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }}
+
+            /* Source — right side */
+            .nc-source {{
+                color: rgba(0,0,0,0.55);
+                font-size: 0.62rem;
+                font-weight: 600;
+                letter-spacing: 0.01em;
+                text-align: right;
+            }}
+
+            /* Sentiment badge — right side below source */
+            .nc-sentiment {{
+                font-size: 0.60rem;
+                font-weight: 700;
+                letter-spacing: 0.02em;
+                text-align: right;
             }}
         </style>
-        <div class="news-row">{cards_html}</div>
+        <div class="nc-row">{cards_html}</div>
         """
-        components.html(full_html, height=310, scrolling=False)
+        components.html(full_html, height=330, scrolling=False)
     else:
         st.markdown(
             "<div style='color:rgba(255,255,255,0.5);font-size:0.88rem;padding:0.5rem 0;'>"
@@ -1292,28 +1268,8 @@ if selected_ticker == "GOOG":
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Download ───────────────────────────────────────────────────────────────
-    st.markdown('<div class="card" style="text-align:center;">', unsafe_allow_html=True)
-    st.subheader("Download Report")
-    st.markdown(
-        "<p style='color:rgba(255,255,255,0.65);font-size:0.88rem;'>Download the forecast details as a CSV file.</p>",
-        unsafe_allow_html=True,
-    )
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    csv_data  = generate_csv(pred_details[["Date", "Day", "Forecast Price", "Lower Band ($)", "Upper Band ($)", "Change %"]])
-    st.download_button(
-        label="Download GOOG Forecast CSV",
-        data=csv_data,
-        file_name=f"GOOG_forecast_{today_str}.csv",
-        mime="text/csv",
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+# 8b.  NON-GOOG  --  FULL TECHNICAL ANALYSIS MODE
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 8b.  NON-GOOG  –  FULL TECHNICAL ANALYSIS MODE
-#      Now includes RSI, MACD, Bollinger Bands, and a signal summary table
-#      instead of just a price chart and a 10-row moving average table.
-# ─────────────────────────────────────────────────────────────────────────────
 
 else:
     company_name = TICKERS[selected_ticker]
@@ -1363,7 +1319,6 @@ else:
         )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── CARD 1: Price + MA chart ──────────────────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader(f"{selected_ticker} Historical Price and Moving Averages")
     fig = go.Figure()
@@ -1401,7 +1356,6 @@ else:
     st.plotly_chart(fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── CARD 2: Technical indicators (tabbed) ─────────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Technical Analysis")
     tab_bb, tab_rsi, tab_macd, tab_vol = st.tabs([
@@ -1512,7 +1466,6 @@ else:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── CARD 3: Signal summary + MA table (tabbed) ────────────────────────────
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Analysis Summary")
     tab_signals, tab_ma = st.tabs(["Signal Summary", "Moving Averages"])
@@ -1555,27 +1508,8 @@ else:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ── Download ───────────────────────────────────────────────────────────────
-    st.markdown('<div class="card" style="text-align:center;">', unsafe_allow_html=True)
-    st.subheader("Download Report")
-    st.markdown(
-        "<p style='color:rgba(255,255,255,0.65);font-size:0.88rem;'>Download the technical summary as a CSV file.</p>",
-        unsafe_allow_html=True,
-    )
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    csv_data  = generate_csv(ma_summary)
-    st.download_button(
-        label=f"Download {selected_ticker} Technical Summary CSV",
-        data=csv_data,
-        file_name=f"{selected_ticker}_technical_{today_str}.csv",
-        mime="text/csv",
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 9.  DISCLAIMER
-# ─────────────────────────────────────────────────────────────────────────────
-
 st.markdown(
     """
 <div class="card" style="text-align:center;margin-top:2rem;">
