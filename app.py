@@ -519,11 +519,11 @@ def generate_signal_summary(close_series):
     rows = []
 
     if current_rsi > 70:
-        rows.append(("RSI", "Overbought", f"{current_rsi:.1f}, price may be due for a pullback"))
+        rows.append(("RSI", "Overbought", f"{current_rsi:.1f} price may be due for a pullback"))
     elif current_rsi < 30:
-        rows.append(("RSI", "Oversold",   f"{current_rsi:.1f},price may be due for a bounce"))
+        rows.append(("RSI", "Oversold",   f"{current_rsi:.1f} price may be due for a bounce"))
     else:
-        rows.append(("RSI", "Neutral",    f"{current_rsi:.1f},no extreme reading"))
+        rows.append(("RSI", "Neutral",    f"{current_rsi:.1f} no extreme reading"))
 
     prev_macd = macd_line.iloc[-2]
     prev_sig  = signal_line.iloc[-2]
@@ -532,14 +532,14 @@ def generate_signal_summary(close_series):
     elif prev_macd > prev_sig and current_macd < current_sig:
         rows.append(("MACD", "Bearish crossover", "MACD just crossed below signal line"))
     elif current_macd > current_sig:
-        rows.append(("MACD", "Bullish",  "MACD above signal — upward momentum"))
+        rows.append(("MACD", "Bullish",  "MACD above signal  upward momentum"))
     else:
-        rows.append(("MACD", "Bearish",  "MACD below signal — downward momentum"))
+        rows.append(("MACD", "Bearish",  "MACD below signal  downward momentum"))
 
     if current_price > current_bb_u:
-        rows.append(("Bollinger Bands", "Above upper band", f"Price ${current_price:.2f} above upper band ${current_bb_u:.2f} — extended"))
+        rows.append(("Bollinger Bands", "Above upper band", f"Price ${current_price:.2f} above upper band ${current_bb_u:.2f}  extended"))
     elif current_price < current_bb_l:
-        rows.append(("Bollinger Bands", "Below lower band", f"Price ${current_price:.2f} below lower band ${current_bb_l:.2f} — oversold"))
+        rows.append(("Bollinger Bands", "Below lower band", f"Price ${current_price:.2f} below lower band ${current_bb_l:.2f}  oversold"))
     else:
         pct_b = (current_price - current_bb_l) / (current_bb_u - current_bb_l) * 100
         rows.append(("Bollinger Bands", "Within bands", f"Price at {pct_b:.0f}% of band range"))
@@ -547,9 +547,9 @@ def generate_signal_summary(close_series):
     prev_ma20 = ma20.iloc[-2]
     prev_ma50 = ma50.iloc[-2]
     if prev_ma20 < prev_ma50 and current_ma20 > current_ma50:
-        rows.append(("MA Cross", "Golden Cross", "20-day MA crossed above 50-day — long-term bullish signal"))
+        rows.append(("MA Cross", "Golden Cross", "20-day MA crossed above 50-day  long-term bullish signal"))
     elif prev_ma20 > prev_ma50 and current_ma20 < current_ma50:
-        rows.append(("MA Cross", "Death Cross",  "20-day MA crossed below 50-day — long-term bearish signal"))
+        rows.append(("MA Cross", "Death Cross",  "20-day MA crossed below 50-day  long-term bearish signal"))
     elif current_ma20 > current_ma50:
         rows.append(("MA Cross", "Bullish trend", f"20-day MA (${current_ma20:.2f}) above 50-day MA (${current_ma50:.2f})"))
     else:
@@ -992,7 +992,7 @@ if selected_ticker == "GOOG":
         st.markdown(
             """
             <p style="color:rgba(255,255,255,0.65);font-size:0.9rem;margin-bottom:1rem;">
-            Scaler fitted on data ending 90 days ago — the 60 evaluation days are genuinely
+            Scaler fitted on data ending 90 days ago, the 60 evaluation days are
             out-of-sample. Directional accuracy above 55% is actionable; near 50% is a coin flip.
             </p>
             """,
@@ -1057,7 +1057,7 @@ if selected_ticker == "GOOG":
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # CARD 4: Latest Google News — redesigned cards
+    # CARD 4: Latest Google News  redesigned cards
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Latest Google News")
     st.markdown(
@@ -1119,7 +1119,7 @@ if selected_ticker == "GOOG":
                 flex-direction: row;
                 gap: 1rem;
                 overflow-x: auto;
-                padding: 0.25rem 0.1rem 1rem 0.1rem;
+                padding: 0.25rem 0.5rem 1rem 0.5rem;
                 scrollbar-width: thin;
                 scrollbar-color: rgba(255,255,255,0.15) transparent;
             }}
@@ -1170,7 +1170,7 @@ if selected_ticker == "GOOG":
                     rgba(255,123,114,0.16) 100%);
             }}
 
-            /* Body — white/light background like img1 */
+            /* Body  white/light background like img1 */
             .nc-body {{
                 padding: 0.75rem 0.85rem 0.7rem 0.85rem;
                 background: rgba(255,255,255,0.92);
@@ -1231,16 +1231,16 @@ if selected_ticker == "GOOG":
                 flex-shrink: 0;
             }}
 
-            /* Date — left side, small and muted */
+            /* Date  left side, small and muted */
             .nc-date {{
-                color: rgba(0,0,0,0.38);
+                color: rgba(0,0,0,0.55);
                 font-size: 0.60rem;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
             }}
 
-            /* Source — right side */
+            /* Source  right side */
             .nc-source {{
                 color: rgba(0,0,0,0.55);
                 font-size: 0.62rem;
@@ -1249,17 +1249,26 @@ if selected_ticker == "GOOG":
                 text-align: right;
             }}
 
-            /* Sentiment badge — right side below source */
+            /* Sentiment badge  right side below source */
             .nc-sentiment {{
                 font-size: 0.60rem;
                 font-weight: 700;
                 letter-spacing: 0.02em;
                 text-align: right;
             }}
+
+            .nc-wrapper {{
+                    width: 100%;
+                    overflow: hidden;
+                    padding: 0 0.25rem;
+                    box-sizing: border-box;
+                }}
         </style>
-        <div class="nc-row">{cards_html}</div>
+        <div class="nc-wrapper">
+            <div class="nc-row">{cards_html}</div>
+        </div>
         """
-        components.html(full_html, height=330, scrolling=False)
+        components.html(full_html, height=340, scrolling=False)
     else:
         st.markdown(
             "<div style='color:rgba(255,255,255,0.5);font-size:0.88rem;padding:0.5rem 0;'>"
@@ -1269,7 +1278,6 @@ if selected_ticker == "GOOG":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # 8b.  NON-GOOG  --  FULL TECHNICAL ANALYSIS MODE
-
 
 else:
     company_name = TICKERS[selected_ticker]
